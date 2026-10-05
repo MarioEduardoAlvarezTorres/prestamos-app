@@ -73,7 +73,7 @@ export default function Home() {
   const [responseLoading, setResponseLoading] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalData | null>(null);
-
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<"inicio" | "historial">(
     "inicio"
   );
@@ -91,6 +91,47 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch((error) => {
+          console.error("Error registrando Service Worker:", error);
+        });
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+    };
+
+    window.addEventListener(
+      "beforeinstallprompt",
+      handleBeforeInstallPrompt
+    );
+
+    return () => {
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt
+      );
+    };
+  }, []);
+
+  async function instalarAplicacion() {
+    if (!installPrompt) {
+      return;
+    }
+
+    installPrompt.prompt();
+
+    await installPrompt.userChoice;
+
+    setInstallPrompt(null);
+  }
 
   async function loadData() {
     setLoading(true);
@@ -636,6 +677,14 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-100 pb-24">
+      {installPrompt && (
+        <button
+          onClick={instalarAplicacion}
+          className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm"
+        >
+          📱 Instalar aplicación
+        </button>
+      )}
       <div className="mx-auto w-full max-w-2xl px-4 py-5">
         {/* ENCABEZADO */}
         <header className="mb-6 flex items-center justify-between">
