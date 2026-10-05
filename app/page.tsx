@@ -36,12 +36,12 @@ type Loan = {
   description: string | null;
   due_date: string | null;
   status:
-    | "pending"
-    | "active"
-    | "payment_pending"
-    | "completed"
-    | "rejected"
-    | "cancelled";
+  | "pending"
+  | "active"
+  | "payment_pending"
+  | "completed"
+  | "rejected"
+  | "cancelled";
   created_at: string;
   updated_at: string;
 };
@@ -415,7 +415,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo iniciar sesión",
         error?.message ||
-          "Ocurrió un error al iniciar sesión.",
+        "Ocurrió un error al iniciar sesión.",
         "error"
       );
 
@@ -532,7 +532,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo registrar",
         error?.message ||
-          "Ocurrió un error registrando el préstamo.",
+        "Ocurrió un error registrando el préstamo.",
         "error"
       );
     } finally {
@@ -594,7 +594,7 @@ export default function Home() {
   function seleccionarComprobante(
     event: React.ChangeEvent<HTMLInputElement>
   ) {
-    const file = event.target.files?.[0] || null;
+    const file = event.target.files?.[0];
 
     if (!file) {
       setPaymentFile(null);
@@ -616,6 +616,12 @@ export default function Home() {
     }
 
     setPaymentFile(file);
+
+    mostrarModal(
+      "Comprobante seleccionado",
+      file.name,
+      "success"
+    );
   }
 
   async function registrarPago() {
@@ -666,7 +672,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo registrar",
         error?.message ||
-          "Ocurrió un error registrando el pago.",
+        "Ocurrió un error registrando el pago.",
         "error"
       );
     } finally {
@@ -700,7 +706,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo abrir",
         error?.message ||
-          "No se pudo abrir el comprobante.",
+        "No se pudo abrir el comprobante.",
         "error"
       );
     }
@@ -729,7 +735,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo confirmar",
         error?.message ||
-          "Ocurrió un error confirmando el pago.",
+        "Ocurrió un error confirmando el pago.",
         "error"
       );
     } finally {
@@ -888,7 +894,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo crear",
         error?.message ||
-          "Ocurrió un error creando el gasto.",
+        "Ocurrió un error creando el gasto.",
         "error"
       );
     } finally {
@@ -1031,7 +1037,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo registrar",
         error?.message ||
-          "Ocurrió un error registrando el pago.",
+        "Ocurrió un error registrando el pago.",
         "error"
       );
     } finally {
@@ -1070,7 +1076,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo confirmar",
         error?.message ||
-          "Ocurrió un error confirmando el pago.",
+        "Ocurrió un error confirmando el pago.",
         "error"
       );
     } finally {
@@ -1111,7 +1117,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo abrir",
         error?.message ||
-          "No se pudo abrir el comprobante.",
+        "No se pudo abrir el comprobante.",
         "error"
       );
     }
@@ -1487,11 +1493,11 @@ export default function Home() {
                             <p className="font-semibold text-slate-900">
                               {soyPrestamista
                                 ? `Le prestaste a ${obtenerNombre(
-                                    loan.borrower_id
-                                  )}`
+                                  loan.borrower_id
+                                )}`
                                 : `Te prestó ${obtenerNombre(
-                                    loan.lender_id
-                                  )}`}
+                                  loan.lender_id
+                                )}`}
                             </p>
 
                             <p className="text-sm text-slate-700 mt-1">
@@ -1585,7 +1591,7 @@ export default function Home() {
                           <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
                             {formatearMonto(
                               payment?.amount ||
-                                loan.amount
+                              loan.amount
                             )}
                           </p>
                         </div>
@@ -1602,7 +1608,7 @@ export default function Home() {
                             Pago registrado:{" "}
                             {formatearMonto(
                               payment?.amount ||
-                                loan.amount
+                              loan.amount
                             )}
                           </p>
 
@@ -1610,7 +1616,7 @@ export default function Home() {
                             Fecha del pago:{" "}
                             {formatearFechaHora(
                               payment?.created_at ||
-                                null
+                              null
                             )}
                           </p>
 
@@ -1776,11 +1782,10 @@ export default function Home() {
                                 user.id
                               )
                             }
-                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${
-                              selected
-                                ? "border-slate-900 bg-slate-100"
-                                : "border-slate-200 bg-white"
-                            }`}
+                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
+                              ? "border-slate-900 bg-slate-100"
+                              : "border-slate-200 bg-white"
+                              }`}
                           >
                             <span>
                               {user.full_name ||
@@ -1811,12 +1816,11 @@ export default function Home() {
                                 "equal"
                               )
                             }
-                            className={`rounded-2xl py-3 font-semibold ${
-                              sharedExpenseMode ===
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode ===
                               "equal"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
-                            }`}
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
+                              }`}
                           >
                             Partes iguales
                           </button>
@@ -1828,12 +1832,11 @@ export default function Home() {
                                 "custom"
                               )
                             }
-                            className={`rounded-2xl py-3 font-semibold ${
-                              sharedExpenseMode ===
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode ===
                               "custom"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
-                            }`}
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
+                              }`}
                           >
                             Cantidades
                           </button>
@@ -1842,66 +1845,66 @@ export default function Home() {
 
                       {sharedExpenseMode ===
                         "equal" && (
-                        <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                          <p className="text-sm text-slate-600">
-                            Cada persona seleccionada debe pagar:
-                          </p>
+                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="text-sm text-slate-600">
+                              Cada persona seleccionada debe pagar:
+                            </p>
 
-                          <p className="text-xl font-bold text-slate-900 mt-1">
-                            {formatearMonto(
-                              obtenerCantidadCompartida(
-                                sharedExpenseUsers[0]
-                              )
-                            )}
-                          </p>
+                            <p className="text-xl font-bold text-slate-900 mt-1">
+                              {formatearMonto(
+                                obtenerCantidadCompartida(
+                                  sharedExpenseUsers[0]
+                                )
+                              )}
+                            </p>
 
-                          <p className="text-xs text-slate-500 mt-1">
-                            Tú pagas el total por adelantado.
-                          </p>
-                        </div>
-                      )}
+                            <p className="text-xs text-slate-500 mt-1">
+                              Tú pagas el total por adelantado.
+                            </p>
+                          </div>
+                        )}
 
                       {sharedExpenseMode ===
                         "custom" && (
-                        <div className="space-y-2">
-                          {sharedExpenseUsers.map(
-                            (userId) => (
-                              <div
-                                key={userId}
-                                className="flex items-center gap-2"
-                              >
-                                <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
-                                  {obtenerNombre(
-                                    userId
-                                  )}
-                                </div>
-
-                                <input
-                                  type="number"
-                                  inputMode="decimal"
-                                  placeholder="$"
-                                  value={
-                                    sharedCustomAmounts[
+                          <div className="space-y-2">
+                            {sharedExpenseUsers.map(
+                              (userId) => (
+                                <div
+                                  key={userId}
+                                  className="flex items-center gap-2"
+                                >
+                                  <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
+                                    {obtenerNombre(
                                       userId
-                                    ] || ""
-                                  }
-                                  onChange={(event) =>
-                                    setSharedCustomAmounts(
-                                      (current) => ({
-                                        ...current,
-                                        [userId]:
-                                          event.target
-                                            .value,
-                                      })
-                                    )
-                                  }
-                                  className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
-                                />
-                              </div>
-                            )
-                          )}
-                        </div>
-                      )}
+                                    )}
+                                  </div>
+
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    placeholder="$"
+                                    value={
+                                      sharedCustomAmounts[
+                                      userId
+                                      ] || ""
+                                    }
+                                    onChange={(event) =>
+                                      setSharedCustomAmounts(
+                                        (current) => ({
+                                          ...current,
+                                          [userId]:
+                                            event.target
+                                              .value,
+                                        })
+                                      )
+                                    }
+                                    className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                                  />
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
 
                       <button
                         type="button"
@@ -1938,9 +1941,9 @@ export default function Home() {
                         sharedParticipants.find(
                           (item) =>
                             item.expense_id ===
-                              expense.id &&
+                            expense.id &&
                             item.user_id ===
-                              currentUserId
+                            currentUserId
                         );
 
                       return (
@@ -1965,7 +1968,7 @@ export default function Home() {
                             <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
                               {formatearMonto(
                                 participant?.amount ||
-                                  0
+                                0
                               )}
                             </p>
                           </div>
@@ -2002,7 +2005,7 @@ export default function Home() {
                               className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                             >
                               {responseLoading ===
-                              expense.id
+                                expense.id
                                 ? "Guardando..."
                                 : "Aceptar"}
                             </button>
@@ -2057,18 +2060,18 @@ export default function Home() {
                         sharedParticipants.find(
                           (item) =>
                             item.expense_id ===
-                              expense.id &&
+                            expense.id &&
                             item.user_id ===
-                              currentUserId
+                            currentUserId
                         );
 
                       const otrosParticipantes =
                         sharedParticipants.filter(
                           (item) =>
                             item.expense_id ===
-                              expense.id &&
+                            expense.id &&
                             item.user_id !==
-                              currentUserId
+                            currentUserId
                         );
 
                       return (
@@ -2098,29 +2101,28 @@ export default function Home() {
                             </div>
 
                             <span
-                              className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${
-                                expense.status ===
+                              className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${expense.status ===
                                 "active"
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : expense.status ===
-                                    "pending"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : expense.status ===
+                                  "pending"
                                   ? "bg-amber-100 text-amber-700"
                                   : expense.status ===
                                     "completed"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : "bg-red-100 text-red-700"
-                              }`}
+                                    ? "bg-blue-100 text-blue-700"
+                                    : "bg-red-100 text-red-700"
+                                }`}
                             >
                               {expense.status ===
-                              "active"
+                                "active"
                                 ? "Activo"
                                 : expense.status ===
                                   "pending"
-                                ? "Pendiente"
-                                : expense.status ===
-                                  "completed"
-                                ? "Completado"
-                                : "Cancelado"}
+                                  ? "Pendiente"
+                                  : expense.status ===
+                                    "completed"
+                                    ? "Completado"
+                                    : "Cancelado"}
                             </span>
                           </div>
 
@@ -2298,7 +2300,7 @@ export default function Home() {
                                                   Pago registrado:{" "}
                                                   {formatearMonto(
                                                     item.payment_amount ||
-                                                      item.amount
+                                                    item.amount
                                                   )}
                                                 </p>
 
@@ -2344,7 +2346,7 @@ export default function Home() {
                                                   className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                                                 >
                                                   {responseLoading ===
-                                                  loadingId
+                                                    loadingId
                                                     ? "Confirmando..."
                                                     : "Confirmar pago recibido"}
                                                 </button>
@@ -2407,13 +2409,13 @@ export default function Home() {
                             <div>
                               <p className="font-semibold text-slate-900">
                                 {loan.lender_id ===
-                                currentUserId
+                                  currentUserId
                                   ? `Le prestaste a ${obtenerNombre(
-                                      loan.borrower_id
-                                    )}`
+                                    loan.borrower_id
+                                  )}`
                                   : `Te prestó ${obtenerNombre(
-                                      loan.lender_id
-                                    )}`}
+                                    loan.lender_id
+                                  )}`}
                               </p>
 
                               <p className="text-sm text-slate-700 mt-1">
@@ -2431,23 +2433,22 @@ export default function Home() {
 
                           <div className="mt-3">
                             <span
-                              className={`inline-flex rounded-full px-3 py-1 text-sm ${
-                                loan.status ===
+                              className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status ===
                                 "completed"
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : loan.status ===
-                                    "rejected"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : loan.status ===
+                                  "rejected"
                                   ? "bg-red-100 text-red-700"
                                   : "bg-slate-100 text-slate-700"
-                              }`}
+                                }`}
                             >
                               {loan.status ===
-                              "completed"
+                                "completed"
                                 ? "Completado"
                                 : loan.status ===
                                   "rejected"
-                                ? "Rechazado"
-                                : "Cancelado"}
+                                  ? "Rechazado"
+                                  : "Cancelado"}
                             </span>
                           </div>
 
@@ -2583,15 +2584,14 @@ export default function Home() {
                             </div>
 
                             <span
-                              className={`inline-flex h-fit rounded-full px-3 py-1 text-sm ${
-                                expense.status ===
+                              className={`inline-flex h-fit rounded-full px-3 py-1 text-sm ${expense.status ===
                                 "completed"
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : "bg-red-100 text-red-700"
-                              }`}
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-red-100 text-red-700"
+                                }`}
                             >
                               {expense.status ===
-                              "completed"
+                                "completed"
                                 ? "Completado"
                                 : "Cancelado"}
                             </span>
@@ -2728,11 +2728,10 @@ export default function Home() {
             onClick={() =>
               setActiveTab("prestamos")
             }
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "prestamos"
-                ? "text-slate-900"
-                : "text-slate-500"
-            }`}
+            className={`py-4 text-sm font-semibold ${activeTab === "prestamos"
+              ? "text-slate-900"
+              : "text-slate-500"
+              }`}
           >
             <div className="text-xl">💸</div>
             Préstamos
@@ -2742,11 +2741,10 @@ export default function Home() {
             onClick={() =>
               setActiveTab("gastos")
             }
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "gastos"
-                ? "text-slate-900"
-                : "text-slate-500"
-            }`}
+            className={`py-4 text-sm font-semibold ${activeTab === "gastos"
+              ? "text-slate-900"
+              : "text-slate-500"
+              }`}
           >
             <div className="text-xl">🍽️</div>
             Gastos
@@ -2756,11 +2754,10 @@ export default function Home() {
             onClick={() =>
               setActiveTab("historial")
             }
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "historial"
-                ? "text-slate-900"
-                : "text-slate-500"
-            }`}
+            className={`py-4 text-sm font-semibold ${activeTab === "historial"
+              ? "text-slate-900"
+              : "text-slate-500"
+              }`}
           >
             <div className="text-xl">📋</div>
             Historial
@@ -2776,19 +2773,18 @@ export default function Home() {
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center px-5">
           <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
             <div
-              className={`text-3xl mb-3 ${
-                modal.type === "success"
-                  ? "text-emerald-600"
-                  : modal.type === "error"
+              className={`text-3xl mb-3 ${modal.type === "success"
+                ? "text-emerald-600"
+                : modal.type === "error"
                   ? "text-red-600"
                   : "text-slate-700"
-              }`}
+                }`}
             >
               {modal.type === "success"
                 ? "✓"
                 : modal.type === "error"
-                ? "!"
-                : "i"}
+                  ? "!"
+                  : "i"}
             </div>
 
             <h3 className="text-xl font-bold text-slate-900">
@@ -2847,6 +2843,22 @@ export default function Home() {
                 className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
               />
 
+              {paymentFile && (
+                <div className="mt-3 rounded-xl border border-green-200 bg-green-50 p-3">
+                  <p className="text-sm font-semibold text-green-800">
+                    Comprobante seleccionado
+                  </p>
+
+                  <p className="mt-1 break-all text-sm text-green-700">
+                    {paymentFile.name}
+                  </p>
+
+                  <p className="mt-1 text-xs text-green-600">
+                    {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                </div>
+              )}
+
               {paymentFile ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <div className="flex items-start gap-3">
@@ -2858,8 +2870,8 @@ export default function Home() {
                         ? "🖼️"
                         : paymentFile.type ===
                           "application/pdf"
-                        ? "📄"
-                        : "📎"}
+                          ? "📄"
+                          : "📎"}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -2986,8 +2998,8 @@ export default function Home() {
                         ? "🖼️"
                         : sharedPaymentFile.type ===
                           "application/pdf"
-                        ? "📄"
-                        : "📎"}
+                          ? "📄"
+                          : "📎"}
                     </div>
 
                     <div className="min-w-0 flex-1">
