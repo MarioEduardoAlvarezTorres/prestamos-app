@@ -20,12 +20,12 @@ type Loan = {
   description: string | null;
   due_date: string;
   status:
-    | "pending"
-    | "active"
-    | "payment_pending"
-    | "completed"
-    | "rejected"
-    | "cancelled";
+  | "pending"
+  | "active"
+  | "payment_pending"
+  | "completed"
+  | "rejected"
+  | "cancelled";
   created_at: string;
   updated_at: string;
 };
@@ -345,6 +345,24 @@ export default function Home() {
 
   function obtenerPago(loanId: string) {
     return payments.find((payment) => payment.loan_id === loanId);
+  }
+
+  async function verComprobante(evidencePath: string) {
+    const { data, error } = await supabase.storage
+      .from("payment-evidence")
+      .createSignedUrl(evidencePath, 60 * 10);
+
+    if (error || !data?.signedUrl) {
+      console.error(error);
+      mostrarModal(
+        "No se pudo abrir el comprobante",
+        error?.message || "No fue posible generar el enlace.",
+        "error"
+      );
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank");
   }
 
   function abrirRegistroPago(loan: Loan) {
@@ -770,11 +788,11 @@ export default function Home() {
                             <h3 className="mt-1 font-bold text-slate-950">
                               {soyPrestamista
                                 ? `A ${obtenerNombre(
-                                    otraPersona
-                                  )}`
+                                  otraPersona
+                                )}`
                                 : `De ${obtenerNombre(
-                                    otraPersona
-                                  )}`}
+                                  otraPersona
+                                )}`}
                             </h3>
                           </div>
 
@@ -787,11 +805,11 @@ export default function Home() {
                           <p className="text-sm font-semibold text-slate-800">
                             {soyPrestamista
                               ? `${obtenerNombre(
-                                  otraPersona
-                                )} te debe`
+                                otraPersona
+                              )} te debe`
                               : `Le debes a ${obtenerNombre(
-                                  otraPersona
-                                )}`}
+                                otraPersona
+                              )}`}
                           </p>
 
                           <p className="mt-1 text-xs text-slate-500">
@@ -831,10 +849,10 @@ export default function Home() {
                                 <p className="mt-1 text-xs text-amber-700">
                                   {payment
                                     ? `${obtenerNombre(
-                                        payment.paid_by
-                                      )} registró un pago de $${Number(
-                                        payment.amount
-                                      ).toFixed(2)}.`
+                                      payment.paid_by
+                                    )} registró un pago de $${Number(
+                                      payment.amount
+                                    ).toFixed(2)}.`
                                     : "Hay un pago pendiente."}
                                 </p>
                               </div>
@@ -1074,6 +1092,8 @@ export default function Home() {
                     ? loan.borrower_id
                     : loan.lender_id;
 
+                  const payment = obtenerPago(loan.id);
+
                   return (
                     <div
                       key={loan.id}
@@ -1090,26 +1110,25 @@ export default function Home() {
                           <h3 className="mt-1 font-bold text-slate-950">
                             {soyPrestamista
                               ? `A ${obtenerNombre(
-                                  otraPersona
-                                )}`
+                                otraPersona
+                              )}`
                               : `De ${obtenerNombre(
-                                  otraPersona
-                                )}`}
+                                otraPersona
+                              )}`}
                           </h3>
                         </div>
 
                         <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            loan.status === "completed"
-                              ? "bg-green-100 text-green-700"
-                              : "bg-slate-100 text-slate-600"
-                          }`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${loan.status === "completed"
+                            ? "bg-green-100 text-green-700"
+                            : "bg-slate-100 text-slate-600"
+                            }`}
                         >
                           {loan.status === "completed"
                             ? "Completado"
                             : loan.status === "rejected"
-                            ? "Rechazado"
-                            : "Cancelado"}
+                              ? "Rechazado"
+                              : "Cancelado"}
                         </span>
                       </div>
 
@@ -1143,6 +1162,54 @@ export default function Home() {
                         </p>
                       )}
 
+                      {payment && (
+                        <div className="mt-4 rounded-xl bg-slate-50 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Información del pago
+                          </p>
+
+                          <div className="mt-3 space-y-2">
+                            <div className="flex justify-between gap-4">
+                              <span className="text-sm text-slate-500">
+                                Monto pagado
+                              </span>
+
+                              <span className="text-sm font-semibold text-slate-900">
+                                ${Number(payment.amount).toFixed(2)}
+                              </span>
+                            </div>
+
+                            <div className="flex justify-between gap-4">
+                              <span className="text-sm text-slate-500">
+                                Fecha de pago
+                              </span>
+
+                              <span className="text-sm font-semibold text-slate-900">
+                                {new Date(payment.created_at).toLocaleDateString(
+                                  "es-MX",
+                                  {
+                                    day: "2-digit",
+                                    month: "2-digit",
+                                    year: "numeric",
+                                  }
+                                )}
+                              </span>
+                            </div>
+
+                            {payment.evidence_url && (
+                              <button
+                                onClick={() =>
+                                  verComprobante(payment.evidence_url!)
+                                }
+                                className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                              >
+                                📎 Ver comprobante
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <p className="mt-4 text-xs text-slate-400">
                         Creado el{" "}
                         {new Date(
@@ -1163,11 +1230,10 @@ export default function Home() {
         <div className="mx-auto grid max-w-2xl grid-cols-2">
           <button
             onClick={() => setActiveTab("inicio")}
-            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${
-              activeTab === "inicio"
-                ? "text-slate-950"
-                : "text-slate-400"
-            }`}
+            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${activeTab === "inicio"
+              ? "text-slate-950"
+              : "text-slate-400"
+              }`}
           >
             <span className="text-xl">⌂</span>
             Inicio
@@ -1175,11 +1241,10 @@ export default function Home() {
 
           <button
             onClick={() => setActiveTab("historial")}
-            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${
-              activeTab === "historial"
-                ? "text-slate-950"
-                : "text-slate-400"
-            }`}
+            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${activeTab === "historial"
+              ? "text-slate-950"
+              : "text-slate-400"
+              }`}
           >
             <span className="text-xl">↺</span>
             Historial
@@ -1192,19 +1257,18 @@ export default function Home() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-5">
           <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
             <div
-              className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full text-xl ${
-                modal.type === "success"
-                  ? "bg-green-100 text-green-700"
-                  : modal.type === "error"
+              className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full text-xl ${modal.type === "success"
+                ? "bg-green-100 text-green-700"
+                : modal.type === "error"
                   ? "bg-red-100 text-red-700"
                   : "bg-slate-100 text-slate-700"
-              }`}
+                }`}
             >
               {modal.type === "success"
                 ? "✓"
                 : modal.type === "error"
-                ? "!"
-                : "i"}
+                  ? "!"
+                  : "i"}
             </div>
 
             <h2 className="mt-4 text-center text-xl font-bold text-slate-950">
