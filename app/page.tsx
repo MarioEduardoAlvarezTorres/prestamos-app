@@ -1,69 +1,245 @@
-import Image from "next/image";
+"use client";
+
+import { createClient } from "@/lib/supabase";
+import { useEffect, useState } from "react";
+
+type Profile = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  avatar_url: string | null;
+};
 
 export default function Home() {
+  const [email, setEmail] = useState<string | null>(null);
+  const [users, setUsers] = useState<Profile[]>([]);
+  const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function loadData() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setLoading(false);
+        return;
+      }
+
+      setEmail(session.user.email ?? null);
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, avatar_url")
+        .eq("is_active", true)
+        .neq("id", session.user.id);
+
+      if (error) {
+        console.error(error);
+      } else {
+        setUsers(data ?? []);
+      }
+
+      setLoading(false);
+    }
+
+    loadData();
+  }, []);
+
+  async function solicitarPrestamo() {
+    if (!selectedUser || !amount) {
+      alert("Selecciona una persona e indica la cantidad.");
+      return;
+    }
+
+    const numericAmount = Number(amount);
+
+    if (numericAmount <= 0) {
+      alert("La cantidad debe ser mayor que 0.");
+      return;
+    }
+
+    setSending(true);
+
+    const supabase = createClient();
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session) {
+      alert("Tu sesión ha expirado.");
+      setSending(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("loans")
+      .insert({
+        lender_id: selectedUser.id,
+        borrower_id: session.user.id,
+        amount: numericAmount,
+        description: description || null,
+        status: "pending",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error(error);
+      alert("No se pudo crear la solicitud: " + error.message);
+      setSending(false);
+      return;
+    }
+
+    await supabase.from("loan_acceptances").insert([
+      {
+        loan_id: data.id,
+        user_id: session.user.id,
+        accepted: true,
+        accepted_at: new Date().toISOString(),
+      },
+      {
+        loan_id: data.id,
+        user_id: selectedUser.id,
+        accepted: false,
+      },
+    ]);
+
+    alert("¡Solicitud enviada!");
+
+    setSelectedUser(null);
+    setAmount("");
+    setDescription("");
+    setSending(false);
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center">
+        <p>Cargando...</p>
+      </main>
+    );
+  }
+
+  if (!email) {
+    return (
+      <main className="min-h-screen flex items-center justify-center">
+        <p>No has iniciado sesión.</p>
+      </main>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <main className="min-h-screen bg-slate-100 p-6">
+      <div className="max-w-md mx-auto">
+
+        <div className="bg-white rounded-3xl shadow-lg p-6">
+          <h1 className="text-2xl font-bold">
+            Bienvenido 👋
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+
+          <p className="text-slate-500 mt-2">
+            {email}
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+
+        {!selectedUser ? (
+          <div className="bg-white rounded-3xl shadow-lg p-6 mt-6">
+            <h2 className="text-xl font-bold">
+              Solicitar préstamo
+            </h2>
+
+            <p className="text-slate-500 mt-2 mb-5">
+              Elige a la persona a quien quieres solicitarle dinero.
+            </p>
+
+            {users.length === 0 ? (
+              <p className="text-slate-500">
+                Todavía no hay otros usuarios registrados.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {users.map((user) => (
+                  <button
+                    key={user.id}
+                    onClick={() => setSelectedUser(user)}
+                    className="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"
+                  >
+                    <p className="font-semibold">
+                      {user.full_name || "Usuario"}
+                    </p>
+
+                    <p className="text-sm text-slate-500">
+                      {user.email}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="bg-white rounded-3xl shadow-lg p-6 mt-6">
+            <button
+              onClick={() => setSelectedUser(null)}
+              className="text-sm text-slate-500 mb-5"
+            >
+              ← Cambiar persona
+            </button>
+
+            <h2 className="text-xl font-bold">
+              Solicitar préstamo
+            </h2>
+
+            <p className="mt-2 mb-6">
+              Para:{" "}
+              <strong>
+                {selectedUser.full_name || selectedUser.email}
+              </strong>
+            </p>
+
+            <label className="block text-sm font-medium mb-2">
+              Cantidad
+            </label>
+
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Ej. 500"
+              className="w-full border rounded-2xl p-4 mb-5"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+            <label className="block text-sm font-medium mb-2">
+              Motivo
+            </label>
+
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="¿Para qué necesitas el préstamo?"
+              rows={4}
+              className="w-full border rounded-2xl p-4 mb-5"
+            />
+
+            <button
+              onClick={solicitarPrestamo}
+              disabled={sending}
+              className="w-full bg-slate-900 text-white rounded-2xl py-4 font-semibold disabled:opacity-50"
+            >
+              {sending ? "Enviando..." : "Enviar solicitud"}
+            </button>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
