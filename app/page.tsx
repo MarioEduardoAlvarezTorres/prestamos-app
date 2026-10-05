@@ -14,6 +14,9 @@ import {
 import {
   crearGastoCompartido as crearGastoCompartidoService,
   responderGastoCompartido as responderGastoCompartidoService,
+  registrarPagoGastoCompartido as registrarPagoGastoCompartidoService,
+  confirmarPagoGastoCompartido as confirmarPagoGastoCompartidoService,
+  verComprobanteGastoCompartido as verComprobanteGastoCompartidoService,
 } from "../lib/gastos";
 
 type Profile = {
@@ -33,12 +36,12 @@ type Loan = {
   description: string | null;
   due_date: string | null;
   status:
-  | "pending"
-  | "active"
-  | "payment_pending"
-  | "completed"
-  | "rejected"
-  | "cancelled";
+    | "pending"
+    | "active"
+    | "payment_pending"
+    | "completed"
+    | "rejected"
+    | "cancelled";
   created_at: string;
   updated_at: string;
 };
@@ -73,6 +76,11 @@ type SharedExpenseParticipant = {
   accepted: boolean;
   accepted_at: string | null;
   paid: boolean;
+  payment_amount: number | null;
+  payment_evidence_url: string | null;
+  payment_at: string | null;
+  payment_confirmed: boolean;
+  payment_confirmed_at: string | null;
   created_at: string;
 };
 
@@ -96,6 +104,26 @@ export default function Home() {
   const [sharedParticipants, setSharedParticipants] = useState<
     SharedExpenseParticipant[]
   >([]);
+
+  // ============================================================
+  // PAGO DE GASTO COMPARTIDO
+  // ============================================================
+
+  const [sharedPaymentExpense, setSharedPaymentExpense] =
+    useState<SharedExpense | null>(null);
+
+  const [sharedPaymentAmount, setSharedPaymentAmount] =
+    useState("");
+
+  const [sharedPaymentFile, setSharedPaymentFile] =
+    useState<File | null>(null);
+
+  const [sharedPaymentSending, setSharedPaymentSending] =
+    useState(false);
+
+  // ============================================================
+  // NAVEGACIÓN
+  // ============================================================
 
   const [activeTab, setActiveTab] = useState<
     "prestamos" | "gastos" | "historial"
@@ -146,10 +174,13 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [paymentSending, setPaymentSending] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
+
   const [responseLoading, setResponseLoading] = useState<string | null>(
     null
   );
-  const [sharedExpenseLoading, setSharedExpenseLoading] = useState(false);
+
+  const [sharedExpenseLoading, setSharedExpenseLoading] =
+    useState(false);
 
   const [modal, setModal] = useState<ModalData | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -233,14 +264,15 @@ export default function Home() {
       setCurrentUserId(userId);
       setEmail(session.user.email || "");
 
-      const { data: profilesData, error: profilesError } = await supabase
-        .from("profiles")
-        .select(
-          "id, full_name, email, avatar_url, is_admin, is_active"
-        )
-        .eq("is_active", true)
-        .neq("id", userId)
-        .order("full_name", { ascending: true });
+      const { data: profilesData, error: profilesError } =
+        await supabase
+          .from("profiles")
+          .select(
+            "id, full_name, email, avatar_url, is_admin, is_active"
+          )
+          .eq("is_active", true)
+          .neq("id", userId)
+          .order("full_name", { ascending: true });
 
       if (profilesError) {
         console.error("Error cargando usuarios:", profilesError);
@@ -260,10 +292,11 @@ export default function Home() {
         setLoans(loansData || []);
       }
 
-      const { data: paymentsData, error: paymentsError } = await supabase
-        .from("loan_payments")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data: paymentsData, error: paymentsError } =
+        await supabase
+          .from("loan_payments")
+          .select("*")
+          .order("created_at", { ascending: false });
 
       if (paymentsError) {
         console.error("Error cargando pagos:", paymentsError);
@@ -271,21 +304,27 @@ export default function Home() {
         setPayments(paymentsData || []);
       }
 
-      const { data: expensesData, error: expensesError } = await supabase
-        .from("shared_expenses")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const { data: expensesData, error: expensesError } =
+        await supabase
+          .from("shared_expenses")
+          .select("*")
+          .order("created_at", { ascending: false });
 
       if (expensesError) {
-        console.error("Error cargando gastos:", expensesError);
+        console.error(
+          "Error cargando gastos compartidos:",
+          expensesError
+        );
       } else {
         setSharedExpenses(expensesData || []);
       }
 
-      const { data: participantsData, error: participantsError } =
-        await supabase
-          .from("shared_expense_participants")
-          .select("*");
+      const {
+        data: participantsData,
+        error: participantsError,
+      } = await supabase
+        .from("shared_expense_participants")
+        .select("*");
 
       if (participantsError) {
         console.error(
@@ -375,7 +414,8 @@ export default function Home() {
 
       mostrarModal(
         "No se pudo iniciar sesión",
-        error?.message || "Ocurrió un error al iniciar sesión.",
+        error?.message ||
+          "Ocurrió un error al iniciar sesión.",
         "error"
       );
 
@@ -463,6 +503,8 @@ export default function Home() {
     try {
       setSending(true);
 
+      const nombreDestinatario = obtenerNombre(selectedUser);
+
       await registrarPrestamoService({
         borrowerId: selectedUser,
         amount: numero,
@@ -481,7 +523,7 @@ export default function Home() {
         "Préstamo registrado",
         `Registraste que le prestaste ${formatearMonto(
           numero
-        )} a ${obtenerNombre(selectedUser)}. Esa persona debe confirmarlo.`,
+        )} a ${nombreDestinatario}. Esa persona debe confirmarlo.`,
         "success"
       );
     } catch (error: any) {
@@ -490,7 +532,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo registrar",
         error?.message ||
-        "Ocurrió un error registrando el préstamo.",
+          "Ocurrió un error registrando el préstamo.",
         "error"
       );
     } finally {
@@ -534,7 +576,7 @@ export default function Home() {
   }
 
   // ============================================================
-  // PAGOS
+  // PAGOS DE PRÉSTAMOS
   // ============================================================
 
   function abrirRegistroPago(loan: Loan) {
@@ -623,7 +665,8 @@ export default function Home() {
 
       mostrarModal(
         "No se pudo registrar",
-        error?.message || "Ocurrió un error registrando el pago.",
+        error?.message ||
+          "Ocurrió un error registrando el pago.",
         "error"
       );
     } finally {
@@ -632,7 +675,7 @@ export default function Home() {
   }
 
   // ============================================================
-  // COMPROBANTE
+  // COMPROBANTE DE PRÉSTAMO
   // ============================================================
 
   async function verComprobante(path: string | null) {
@@ -656,14 +699,15 @@ export default function Home() {
 
       mostrarModal(
         "No se pudo abrir",
-        error?.message || "No se pudo abrir el comprobante.",
+        error?.message ||
+          "No se pudo abrir el comprobante.",
         "error"
       );
     }
   }
 
   // ============================================================
-  // CONFIRMAR RECEPCIÓN DEL PAGO
+  // CONFIRMAR RECEPCIÓN PRÉSTAMO
   // ============================================================
 
   async function confirmarRecepcion(loanId: string) {
@@ -684,7 +728,8 @@ export default function Home() {
 
       mostrarModal(
         "No se pudo confirmar",
-        error?.message || "Ocurrió un error confirmando el pago.",
+        error?.message ||
+          "Ocurrió un error confirmando el pago.",
         "error"
       );
     } finally {
@@ -731,35 +776,15 @@ export default function Home() {
       return Number(sharedCustomAmounts[userId] || 0);
     }
 
-    const cantidadPersonas = sharedExpenseUsers.length + 1;
+    const cantidadPersonas = sharedExpenseUsers.length;
 
     if (!total || cantidadPersonas <= 0) {
       return 0;
     }
 
-    return Math.round((total / cantidadPersonas) * 100) / 100;
-  }
-
-  function obtenerCantidadDelCreador() {
-    const total = Number(sharedExpenseTotal || 0);
-
-    if (sharedExpenseMode === "equal") {
-      const cantidadPersonas = sharedExpenseUsers.length + 1;
-
-      if (!total || cantidadPersonas <= 0) {
-        return 0;
-      }
-
-      return Math.round((total / cantidadPersonas) * 100) / 100;
-    }
-
-    const sumaOtros = sharedExpenseUsers.reduce(
-      (sum, userId) =>
-        sum + Number(sharedCustomAmounts[userId] || 0),
-      0
-    );
-
-    return Math.round((total - sumaOtros) * 100) / 100;
+    return Math.round(
+      (total / cantidadPersonas) * 100
+    ) / 100;
   }
 
   async function crearGastoCompartido() {
@@ -799,19 +824,11 @@ export default function Home() {
         0
       );
 
-      if (sumaOtros > total) {
-        mostrarModal(
-          "Montos inválidos",
-          "La suma de las cantidades no puede superar el total.",
-          "error"
+      const cantidadesInvalidas =
+        sharedExpenseUsers.some(
+          (userId) =>
+            Number(sharedCustomAmounts[userId] || 0) <= 0
         );
-        return;
-      }
-
-      const cantidadesInvalidas = sharedExpenseUsers.some(
-        (userId) =>
-          Number(sharedCustomAmounts[userId] || 0) <= 0
-      );
 
       if (cantidadesInvalidas) {
         mostrarModal(
@@ -821,15 +838,26 @@ export default function Home() {
         );
         return;
       }
+
+      if (Math.abs(sumaOtros - total) > 0.01) {
+        mostrarModal(
+          "Montos inválidos",
+          "La suma de las cantidades de los participantes debe ser igual al total.",
+          "error"
+        );
+        return;
+      }
     }
 
     try {
       setSharedExpenseLoading(true);
 
-      const participants = sharedExpenseUsers.map((userId) => ({
-        user_id: userId,
-        amount: obtenerCantidadCompartida(userId),
-      }));
+      const participants = sharedExpenseUsers.map(
+        (userId) => ({
+          user_id: userId,
+          amount: obtenerCantidadCompartida(userId),
+        })
+      );
 
       await crearGastoCompartidoService({
         title: sharedExpenseTitle.trim(),
@@ -859,13 +887,18 @@ export default function Home() {
 
       mostrarModal(
         "No se pudo crear",
-        error?.message || "Ocurrió un error creando el gasto.",
+        error?.message ||
+          "Ocurrió un error creando el gasto.",
         "error"
       );
     } finally {
       setSharedExpenseLoading(false);
     }
   }
+
+  // ============================================================
+  // RESPONDER GASTO
+  // ============================================================
 
   async function responderGastoCompartido(
     expenseId: string,
@@ -882,9 +915,11 @@ export default function Home() {
       await loadData();
 
       mostrarModal(
-        aceptar ? "Gasto aceptado" : "Gasto rechazado",
         aceptar
-          ? "Aceptaste tu parte del gasto."
+          ? "Gasto aceptado"
+          : "Gasto rechazado",
+        aceptar
+          ? "Aceptaste tu parte del gasto. Ahora puedes registrar tu pago."
           : "Rechazaste participar en el gasto.",
         aceptar ? "success" : "info"
       );
@@ -902,11 +937,190 @@ export default function Home() {
   }
 
   // ============================================================
+  // PAGO DE GASTO COMPARTIDO
+  // ============================================================
+
+  function abrirPagoGastoCompartido(
+    expense: SharedExpense,
+    participant: SharedExpenseParticipant
+  ) {
+    setSharedPaymentExpense(expense);
+    setSharedPaymentAmount(
+      String(participant.amount)
+    );
+    setSharedPaymentFile(null);
+  }
+
+  function cerrarPagoGastoCompartido() {
+    setSharedPaymentExpense(null);
+    setSharedPaymentAmount("");
+    setSharedPaymentFile(null);
+  }
+
+  function seleccionarComprobanteGasto(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0] || null;
+
+    if (!file) {
+      setSharedPaymentFile(null);
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      mostrarModal(
+        "Archivo demasiado grande",
+        "El comprobante debe pesar máximo 10 MB.",
+        "error"
+      );
+
+      event.target.value = "";
+      setSharedPaymentFile(null);
+      return;
+    }
+
+    setSharedPaymentFile(file);
+  }
+
+  async function registrarPagoGastoCompartido() {
+    if (!sharedPaymentExpense || !currentUserId) {
+      return;
+    }
+
+    const numero = Number(sharedPaymentAmount);
+
+    if (!numero || numero <= 0) {
+      mostrarModal(
+        "Monto inválido",
+        "Escribe un monto válido.",
+        "error"
+      );
+      return;
+    }
+
+    if (!sharedPaymentFile) {
+      mostrarModal(
+        "Falta comprobante",
+        "Debes seleccionar una imagen o PDF.",
+        "error"
+      );
+      return;
+    }
+
+    try {
+      setSharedPaymentSending(true);
+
+      await registrarPagoGastoCompartidoService({
+        expenseId: sharedPaymentExpense.id,
+        amount: numero,
+        file: sharedPaymentFile,
+      });
+
+      cerrarPagoGastoCompartido();
+
+      await loadData();
+
+      mostrarModal(
+        "Pago registrado",
+        "El comprobante quedó registrado. Ahora quien pagó el gasto debe confirmar el pago.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo registrar",
+        error?.message ||
+          "Ocurrió un error registrando el pago.",
+        "error"
+      );
+    } finally {
+      setSharedPaymentSending(false);
+    }
+  }
+
+  // ============================================================
+  // CONFIRMAR PAGO DE GASTO
+  // ============================================================
+
+  async function confirmarPagoGastoCompartido(
+    expenseId: string,
+    participantUserId: string
+  ) {
+    try {
+      setResponseLoading(
+        `${expenseId}-${participantUserId}`
+      );
+
+      await confirmarPagoGastoCompartidoService(
+        expenseId,
+        participantUserId
+      );
+
+      await loadData();
+
+      mostrarModal(
+        "Pago confirmado",
+        "Confirmaste que recibiste este pago.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo confirmar",
+        error?.message ||
+          "Ocurrió un error confirmando el pago.",
+        "error"
+      );
+    } finally {
+      setResponseLoading(null);
+    }
+  }
+
+  // ============================================================
+  // COMPROBANTE DE GASTO
+  // ============================================================
+
+  async function verComprobanteGastoCompartido(
+    path: string | null
+  ) {
+    if (!path) {
+      mostrarModal(
+        "Sin comprobante",
+        "Este pago no tiene comprobante.",
+        "info"
+      );
+      return;
+    }
+
+    try {
+      const url =
+        await verComprobanteGastoCompartidoService(path);
+
+      if (url) {
+        window.open(
+          url,
+          "_blank",
+          "noopener,noreferrer"
+        );
+      }
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo abrir",
+        error?.message ||
+          "No se pudo abrir el comprobante.",
+        "error"
+      );
+    }
+  }
+
+  // ============================================================
   // DATOS DERIVADOS
   // ============================================================
 
-  // Solo préstamos activos.
-  // Los pagos pendientes ya NO aparecen aquí.
   const misPrestamos = loans.filter(
     (loan) =>
       loan.status === "active" &&
@@ -920,7 +1134,6 @@ export default function Home() {
       loan.borrower_id === currentUserId
   );
 
-  // Solo los pagos que el prestamista debe revisar.
   const pagosPendientes = loans.filter(
     (loan) =>
       loan.status === "payment_pending" &&
@@ -934,29 +1147,33 @@ export default function Home() {
       loan.status === "cancelled"
   );
 
-  const gastosPendientes = sharedExpenses.filter((expense) => {
-    if (!currentUserId) return false;
+  const gastosPendientes = sharedExpenses.filter(
+    (expense) => {
+      if (!currentUserId) return false;
 
-    return sharedParticipants.some(
-      (participant) =>
-        participant.expense_id === expense.id &&
-        participant.user_id === currentUserId &&
-        participant.accepted === false
-    );
-  });
-
-  const misGastosCompartidos = sharedExpenses.filter((expense) => {
-    if (!currentUserId) return false;
-
-    return (
-      expense.created_by === currentUserId ||
-      sharedParticipants.some(
+      return sharedParticipants.some(
         (participant) =>
           participant.expense_id === expense.id &&
-          participant.user_id === currentUserId
-      )
-    );
-  });
+          participant.user_id === currentUserId &&
+          participant.accepted === false
+      );
+    }
+  );
+
+  const misGastosCompartidos = sharedExpenses.filter(
+    (expense) => {
+      if (!currentUserId) return false;
+
+      return (
+        expense.created_by === currentUserId ||
+        sharedParticipants.some(
+          (participant) =>
+            participant.expense_id === expense.id &&
+            participant.user_id === currentUserId
+        )
+      );
+    }
+  );
 
   const historialGastos = sharedExpenses.filter(
     (expense) =>
@@ -973,7 +1190,9 @@ export default function Home() {
       <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <div className="text-center">
           <div className="text-3xl mb-3">💸</div>
-          <p className="text-slate-600">Cargando...</p>
+          <p className="text-slate-600">
+            Cargando...
+          </p>
         </div>
       </main>
     );
@@ -1020,6 +1239,11 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 pb-24">
+
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
+
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
         <div className="max-w-xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
@@ -1042,6 +1266,11 @@ export default function Home() {
       </header>
 
       <div className="max-w-xl mx-auto px-4 pt-5">
+
+        {/* ====================================================
+            INSTALAR
+        ==================================================== */}
+
         {installPrompt && (
           <button
             onClick={instalarAplicacion}
@@ -1051,9 +1280,9 @@ export default function Home() {
           </button>
         )}
 
-        {/* =====================================================
+        {/* ====================================================
             PRÉSTAMOS
-        ===================================================== */}
+        ==================================================== */}
 
         {activeTab === "prestamos" && (
           <div className="space-y-5">
@@ -1073,6 +1302,7 @@ export default function Home() {
               </div>
 
               <div className="space-y-3">
+
                 <select
                   value={selectedUser}
                   onChange={(event) =>
@@ -1085,7 +1315,10 @@ export default function Home() {
                   </option>
 
                   {users.map((user) => (
-                    <option key={user.id} value={user.id}>
+                    <option
+                      key={user.id}
+                      value={user.id}
+                    >
                       {user.full_name || user.email}
                     </option>
                   ))}
@@ -1186,7 +1419,10 @@ export default function Home() {
                       <div className="grid grid-cols-2 gap-2 mt-4">
                         <button
                           onClick={() =>
-                            responderSolicitud(loan.id, true)
+                            responderSolicitud(
+                              loan.id,
+                              true
+                            )
                           }
                           disabled={
                             responseLoading === loan.id
@@ -1200,7 +1436,10 @@ export default function Home() {
 
                         <button
                           onClick={() =>
-                            responderSolicitud(loan.id, false)
+                            responderSolicitud(
+                              loan.id,
+                              false
+                            )
                           }
                           disabled={
                             responseLoading === loan.id
@@ -1248,11 +1487,11 @@ export default function Home() {
                             <p className="font-semibold text-slate-900">
                               {soyPrestamista
                                 ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
+                                    loan.borrower_id
+                                  )}`
                                 : `Te prestó ${obtenerNombre(
-                                  loan.lender_id
-                                )}`}
+                                    loan.lender_id
+                                  )}`}
                             </p>
 
                             <p className="text-sm text-slate-700 mt-1">
@@ -1292,7 +1531,10 @@ export default function Home() {
                           {soyPrestamista && (
                             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
                               Esperando el pago de{" "}
-                              {obtenerNombre(loan.borrower_id)}.
+                              {obtenerNombre(
+                                loan.borrower_id
+                              )}
+                              .
                             </div>
                           )}
                         </div>
@@ -1314,7 +1556,8 @@ export default function Home() {
                 <div className="space-y-3">
                   {pagosPendientes.map((loan) => {
                     const payment = payments.find(
-                      (item) => item.loan_id === loan.id
+                      (item) =>
+                        item.loan_id === loan.id
                     );
 
                     return (
@@ -1325,7 +1568,9 @@ export default function Home() {
                         <div className="flex justify-between gap-4">
                           <div>
                             <p className="font-semibold text-slate-900">
-                              {obtenerNombre(loan.borrower_id)}
+                              {obtenerNombre(
+                                loan.borrower_id
+                              )}
                             </p>
 
                             <p className="text-sm text-slate-700 mt-1">
@@ -1339,7 +1584,8 @@ export default function Home() {
 
                           <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
                             {formatearMonto(
-                              payment?.amount || loan.amount
+                              payment?.amount ||
+                                loan.amount
                             )}
                           </p>
                         </div>
@@ -1347,26 +1593,32 @@ export default function Home() {
                         <div className="mt-4 text-sm text-slate-700 space-y-1">
                           <p>
                             Préstamo original:{" "}
-                            {formatearMonto(loan.amount)}
+                            {formatearMonto(
+                              loan.amount
+                            )}
                           </p>
 
                           <p>
                             Pago registrado:{" "}
                             {formatearMonto(
-                              payment?.amount || loan.amount
+                              payment?.amount ||
+                                loan.amount
                             )}
                           </p>
 
                           <p>
                             Fecha del pago:{" "}
                             {formatearFechaHora(
-                              payment?.created_at || null
+                              payment?.created_at ||
+                                null
                             )}
                           </p>
 
                           <p>
                             Fecha límite original:{" "}
-                            {formatearFecha(loan.due_date)}
+                            {formatearFecha(
+                              loan.due_date
+                            )}
                           </p>
                         </div>
 
@@ -1388,8 +1640,7 @@ export default function Home() {
                           </p>
 
                           <p className="text-sm text-amber-800 mt-1">
-                            Confirma la recepción solamente si
-                            efectivamente recibiste este pago.
+                            Confirma la recepción solamente si efectivamente recibiste este pago.
                           </p>
                         </div>
 
@@ -1408,7 +1659,9 @@ export default function Home() {
 
                         <button
                           onClick={() =>
-                            confirmarRecepcion(loan.id)
+                            confirmarRecepcion(
+                              loan.id
+                            )
                           }
                           disabled={
                             responseLoading === loan.id
@@ -1428,12 +1681,15 @@ export default function Home() {
           </div>
         )}
 
-        {/* =====================================================
-            GASTOS
-        ===================================================== */}
+        {/* ====================================================
+            GASTOS COMPARTIDOS
+        ==================================================== */}
 
         {activeTab === "gastos" && (
           <div className="space-y-5">
+
+            {/* CREAR GASTO */}
+
             <section className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1442,29 +1698,35 @@ export default function Home() {
                   </h2>
 
                   <p className="text-sm text-slate-700 mt-1">
-                    Divide una comida, salida o compra
-                    entre varias personas.
+                    Tú pagas el total y las personas seleccionadas te pagan su parte.
                   </p>
                 </div>
 
                 <button
                   onClick={() =>
-                    setShowSharedExpenseForm((value) => !value)
+                    setShowSharedExpenseForm(
+                      (value) => !value
+                    )
                   }
                   className="rounded-2xl bg-slate-900 text-white px-4 py-3 font-semibold"
                 >
-                  {showSharedExpenseForm ? "Cerrar" : "Nuevo"}
+                  {showSharedExpenseForm
+                    ? "Cerrar"
+                    : "Nuevo"}
                 </button>
               </div>
 
               {showSharedExpenseForm && (
                 <div className="mt-5 space-y-4">
+
                   <input
                     type="text"
                     placeholder="¿Qué pagaste?"
                     value={sharedExpenseTitle}
                     onChange={(event) =>
-                      setSharedExpenseTitle(event.target.value)
+                      setSharedExpenseTitle(
+                        event.target.value
+                      )
                     }
                     className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
                   />
@@ -1475,7 +1737,9 @@ export default function Home() {
                     placeholder="Total"
                     value={sharedExpenseTotal}
                     onChange={(event) =>
-                      setSharedExpenseTotal(event.target.value)
+                      setSharedExpenseTotal(
+                        event.target.value
+                      )
                     }
                     className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
                   />
@@ -1484,34 +1748,43 @@ export default function Home() {
                     placeholder="Descripción (opcional)"
                     value={sharedExpenseDescription}
                     onChange={(event) =>
-                      setSharedExpenseDescription(event.target.value)
+                      setSharedExpenseDescription(
+                        event.target.value
+                      )
                     }
                     className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500 min-h-24"
                   />
 
                   <div>
                     <p className="font-semibold text-slate-900 mb-2">
-                      Participantes
+                      ¿Quiénes te deben pagar?
                     </p>
 
                     <div className="space-y-2">
                       {users.map((user) => {
                         const selected =
-                          sharedExpenseUsers.includes(user.id);
+                          sharedExpenseUsers.includes(
+                            user.id
+                          );
 
                         return (
                           <button
                             key={user.id}
+                            type="button"
                             onClick={() =>
-                              toggleSharedExpenseUser(user.id)
+                              toggleSharedExpenseUser(
+                                user.id
+                              )
                             }
-                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
-                              ? "border-slate-900 bg-slate-100"
-                              : "border-slate-200 bg-white"
-                              }`}
+                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${
+                              selected
+                                ? "border-slate-900 bg-slate-100"
+                                : "border-slate-200 bg-white"
+                            }`}
                           >
                             <span>
-                              {user.full_name || user.email}
+                              {user.full_name ||
+                                user.email}
                             </span>
 
                             <span>
@@ -1532,80 +1805,112 @@ export default function Home() {
 
                         <div className="grid grid-cols-2 gap-2">
                           <button
+                            type="button"
                             onClick={() =>
-                              setSharedExpenseMode("equal")
+                              setSharedExpenseMode(
+                                "equal"
+                              )
                             }
-                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "equal"
-                              ? "bg-slate-900 text-white"
-                              : "bg-slate-100 text-slate-700"
-                              }`}
+                            className={`rounded-2xl py-3 font-semibold ${
+                              sharedExpenseMode ===
+                              "equal"
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
                           >
                             Partes iguales
                           </button>
 
                           <button
+                            type="button"
                             onClick={() =>
-                              setSharedExpenseMode("custom")
+                              setSharedExpenseMode(
+                                "custom"
+                              )
                             }
-                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "custom"
-                              ? "bg-slate-900 text-white"
-                              : "bg-slate-100 text-slate-700"
-                              }`}
+                            className={`rounded-2xl py-3 font-semibold ${
+                              sharedExpenseMode ===
+                              "custom"
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
                           >
                             Cantidades
                           </button>
                         </div>
                       </div>
 
-                      {sharedExpenseMode === "custom" && (
-                        <div className="space-y-2">
-                          {sharedExpenseUsers.map((userId) => (
-                            <div
-                              key={userId}
-                              className="flex items-center gap-2"
-                            >
-                              <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
-                                {obtenerNombre(userId)}
-                              </div>
+                      {sharedExpenseMode ===
+                        "equal" && (
+                        <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                          <p className="text-sm text-slate-600">
+                            Cada persona seleccionada debe pagar:
+                          </p>
 
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                placeholder="$"
-                                value={
-                                  sharedCustomAmounts[userId] || ""
-                                }
-                                onChange={(event) =>
-                                  setSharedCustomAmounts(
-                                    (current) => ({
-                                      ...current,
-                                      [userId]:
-                                        event.target.value,
-                                    })
-                                  )
-                                }
-                                className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
-                              />
-                            </div>
-                          ))}
+                          <p className="text-xl font-bold text-slate-900 mt-1">
+                            {formatearMonto(
+                              obtenerCantidadCompartida(
+                                sharedExpenseUsers[0]
+                              )
+                            )}
+                          </p>
+
+                          <p className="text-xs text-slate-500 mt-1">
+                            Tú pagas el total por adelantado.
+                          </p>
                         </div>
                       )}
 
-                      <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                        <p className="text-sm text-slate-700">
-                          Tu parte
-                        </p>
+                      {sharedExpenseMode ===
+                        "custom" && (
+                        <div className="space-y-2">
+                          {sharedExpenseUsers.map(
+                            (userId) => (
+                              <div
+                                key={userId}
+                                className="flex items-center gap-2"
+                              >
+                                <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
+                                  {obtenerNombre(
+                                    userId
+                                  )}
+                                </div>
 
-                        <p className="text-xl font-bold text-slate-900">
-                          {formatearMonto(
-                            obtenerCantidadDelCreador()
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  placeholder="$"
+                                  value={
+                                    sharedCustomAmounts[
+                                      userId
+                                    ] || ""
+                                  }
+                                  onChange={(event) =>
+                                    setSharedCustomAmounts(
+                                      (current) => ({
+                                        ...current,
+                                        [userId]:
+                                          event.target
+                                            .value,
+                                      })
+                                    )
+                                  }
+                                  className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                                />
+                              </div>
+                            )
                           )}
-                        </p>
-                      </div>
+                        </div>
+                      )}
 
                       <button
-                        onClick={crearGastoCompartido}
-                        disabled={sharedExpenseLoading}
+                        type="button"
+                        onClick={
+                          crearGastoCompartido
+                        }
+                        disabled={
+                          sharedExpenseLoading
+                        }
                         className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
                       >
                         {sharedExpenseLoading
@@ -1618,6 +1923,8 @@ export default function Home() {
               )}
             </section>
 
+            {/* SOLICITUDES */}
+
             {gastosPendientes.length > 0 && (
               <section>
                 <h2 className="text-lg font-bold text-slate-900 mb-3">
@@ -1625,83 +1932,107 @@ export default function Home() {
                 </h2>
 
                 <div className="space-y-3">
-                  {gastosPendientes.map((expense) => {
-                    const participant =
-                      sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
-                      );
+                  {gastosPendientes.map(
+                    (expense) => {
+                      const participant =
+                        sharedParticipants.find(
+                          (item) =>
+                            item.expense_id ===
+                              expense.id &&
+                            item.user_id ===
+                              currentUserId
+                        );
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-amber-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
+                      return (
+                        <div
+                          key={expense.id}
+                          className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
+                        >
+                          <div className="flex justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {expense.title}
+                              </p>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Pagado por{" "}
-                              {obtenerNombre(
-                                expense.created_by
+                              <p className="text-sm text-slate-700 mt-1">
+                                Pagado por{" "}
+                                {obtenerNombre(
+                                  expense.created_by
+                                )}
+                              </p>
+                            </div>
+
+                            <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
+                              {formatearMonto(
+                                participant?.amount ||
+                                  0
                               )}
                             </p>
                           </div>
 
-                          <p className="font-bold text-slate-900">
-                            {formatearMonto(
-                              participant?.amount || 0
-                            )}
-                          </p>
+                          {expense.description && (
+                            <p className="text-sm text-slate-700 mt-3">
+                              {expense.description}
+                            </p>
+                          )}
+
+                          <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                            <p className="font-semibold text-amber-900">
+                              Te están pidiendo pagar tu parte
+                            </p>
+
+                            <p className="text-sm text-amber-800 mt-1">
+                              Si aceptas, después podrás registrar tu pago y subir el comprobante.
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 mt-4">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                responderGastoCompartido(
+                                  expense.id,
+                                  true
+                                )
+                              }
+                              disabled={
+                                responseLoading ===
+                                expense.id
+                              }
+                              className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                            >
+                              {responseLoading ===
+                              expense.id
+                                ? "Guardando..."
+                                : "Aceptar"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                responderGastoCompartido(
+                                  expense.id,
+                                  false
+                                )
+                              }
+                              disabled={
+                                responseLoading ===
+                                expense.id
+                              }
+                              className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                            >
+                              Rechazar
+                            </button>
+                          </div>
                         </div>
-
-                        {expense.description && (
-                          <p className="text-sm text-slate-700 mt-3">
-                            {expense.description}
-                          </p>
-                        )}
-
-                        <div className="grid grid-cols-2 gap-2 mt-4">
-                          <button
-                            onClick={() =>
-                              responderGastoCompartido(
-                                expense.id,
-                                true
-                              )
-                            }
-                            disabled={
-                              responseLoading === expense.id
-                            }
-                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
-                          >
-                            Confirmar
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              responderGastoCompartido(
-                                expense.id,
-                                false
-                              )
-                            }
-                            disabled={
-                              responseLoading === expense.id
-                            }
-                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
-                          >
-                            Rechazar
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+                  )}
                 </div>
               </section>
             )}
+
+            {/* MIS GASTOS */}
 
             <section>
               <h2 className="text-lg font-bold text-slate-900 mb-3">
@@ -1716,143 +2047,336 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {misGastosCompartidos.map((expense) => {
-                    const participant =
-                      sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
-                      );
+                  {misGastosCompartidos.map(
+                    (expense) => {
+                      const soyCreador =
+                        expense.created_by ===
+                        currentUserId;
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
+                      const miParticipacion =
+                        sharedParticipants.find(
+                          (item) =>
+                            item.expense_id ===
+                              expense.id &&
+                            item.user_id ===
+                              currentUserId
+                        );
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Total:{" "}
-                              {formatearMonto(expense.total_amount)}
-                            </p>
+                      const otrosParticipantes =
+                        sharedParticipants.filter(
+                          (item) =>
+                            item.expense_id ===
+                              expense.id &&
+                            item.user_id !==
+                              currentUserId
+                        );
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Pagado por:{" "}
-                              {obtenerNombre(expense.created_by)}
-                            </p>
-                          </div>
+                      return (
+                        <div
+                          key={expense.id}
+                          className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
+                        >
+                          <div className="flex justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {expense.title}
+                              </p>
 
-                          <span
-                            className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "active"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : expense.status === "pending"
+                              <p className="text-sm text-slate-700 mt-1">
+                                Total:{" "}
+                                {formatearMonto(
+                                  expense.total_amount
+                                )}
+                              </p>
+
+                              <p className="text-sm text-slate-700 mt-1">
+                                Pagó el total:{" "}
+                                {obtenerNombre(
+                                  expense.created_by
+                                )}
+                              </p>
+                            </div>
+
+                            <span
+                              className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${
+                                expense.status ===
+                                "active"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : expense.status ===
+                                    "pending"
                                   ? "bg-amber-100 text-amber-700"
-                                  : expense.status === "completed"
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-red-100 text-red-700"
+                                  : expense.status ===
+                                    "completed"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : "bg-red-100 text-red-700"
                               }`}
-                          >
-                            {expense.status === "active"
-                              ? "Activo"
-                              : expense.status === "pending"
+                            >
+                              {expense.status ===
+                              "active"
+                                ? "Activo"
+                                : expense.status ===
+                                  "pending"
                                 ? "Pendiente"
-                                : expense.status === "completed"
-                                  ? "Completado"
-                                  : "Cancelado"}
-                          </span>
-                        </div>
+                                : expense.status ===
+                                  "completed"
+                                ? "Completado"
+                                : "Cancelado"}
+                            </span>
+                          </div>
 
-                        {expense.description && (
-                          <p className="text-sm text-slate-700 mt-3">
-                            {expense.description}
-                          </p>
-                        )}
+                          {expense.description && (
+                            <p className="text-sm text-slate-700 mt-3">
+                              {expense.description}
+                            </p>
+                          )}
 
-                        <div className="mt-5">
-                          <p className="text-sm font-semibold text-slate-900 mb-2">
-                            Quién debe pagar
-                          </p>
+                          {/* =================================================
+                              SI YO SOY PARTICIPANTE
+                          ================================================= */}
 
-                          <div className="space-y-2">
-                            {sharedParticipants
-                              .filter(
-                                (item) => item.expense_id === expense.id
-                              )
-                              .map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                                >
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                      <p className="font-semibold text-slate-900">
-                                        {obtenerNombre(item.user_id)}
+                          {!soyCreador &&
+                            miParticipacion && (
+                              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <p className="text-sm font-semibold text-slate-900">
+                                  Mi parte
+                                </p>
+
+                                <p className="text-2xl font-bold text-slate-900 mt-1">
+                                  {formatearMonto(
+                                    miParticipacion.amount
+                                  )}
+                                </p>
+
+                                {!miParticipacion.accepted && (
+                                  <p className="text-sm text-amber-700 mt-2">
+                                    Falta aceptar la solicitud.
+                                  </p>
+                                )}
+
+                                {miParticipacion.accepted &&
+                                  !miParticipacion.paid && (
+                                    <>
+                                      <p className="text-sm text-red-700 mt-2">
+                                        Falta registrar tu pago.
                                       </p>
 
-                                      <p className="text-sm text-slate-600 mt-1">
-                                        {formatearMonto(item.amount)}
-                                      </p>
-                                    </div>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          abrirPagoGastoCompartido(
+                                            expense,
+                                            miParticipacion
+                                          )
+                                        }
+                                        className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                                      >
+                                        Registrar mi pago
+                                      </button>
+                                    </>
+                                  )}
 
-                                    <div className="text-right">
-                                      {!item.accepted ? (
-                                        <span className="text-xs font-semibold text-amber-700">
-                                          Pendiente de confirmar
-                                        </span>
-                                      ) : item.paid ? (
-                                        <span className="text-xs font-semibold text-emerald-700">
-                                          ✓ Ya pagó
-                                        </span>
-                                      ) : (
-                                        <span className="text-xs font-semibold text-red-700">
-                                          Falta pagar
-                                        </span>
-                                      )}
-                                    </div>
+                                {miParticipacion.paid && (
+                                  <div className="mt-3">
+                                    <p className="text-sm text-emerald-700 font-semibold">
+                                      ✓ Pago registrado
+                                    </p>
+
+                                    {miParticipacion.payment_amount && (
+                                      <p className="text-sm text-slate-700 mt-1">
+                                        Pagaste:{" "}
+                                        {formatearMonto(
+                                          miParticipacion.payment_amount
+                                        )}
+                                      </p>
+                                    )}
+
+                                    {miParticipacion.payment_confirmed ? (
+                                      <p className="text-sm text-emerald-700 mt-2 font-semibold">
+                                        ✓ El pago fue confirmado.
+                                      </p>
+                                    ) : (
+                                      <p className="text-sm text-amber-700 mt-2">
+                                        Esperando confirmación de quien pagó el gasto.
+                                      </p>
+                                    )}
+
+                                    {miParticipacion.payment_evidence_url && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          verComprobanteGastoCompartido(
+                                            miParticipacion.payment_evidence_url
+                                          )
+                                        }
+                                        className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
+                                      >
+                                        Ver mi comprobante
+                                      </button>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
-                          </div>
+                                )}
+                              </div>
+                            )}
+
+                          {/* =================================================
+                              SI YO SOY EL CREADOR
+                          ================================================= */}
+
+                          {soyCreador && (
+                            <>
+                              <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                <p className="text-sm text-slate-700">
+                                  Tú pagaste el total de este gasto.
+                                </p>
+
+                                <p className="text-sm text-slate-700 mt-1">
+                                  Los participantes deben aceptar y después pagarte su parte.
+                                </p>
+                              </div>
+
+                              <div className="mt-5">
+                                <p className="text-sm font-semibold text-slate-900 mb-2">
+                                  Quién debe pagar
+                                </p>
+
+                                {otrosParticipantes.length === 0 ? (
+                                  <p className="text-sm text-slate-500">
+                                    No hay participantes.
+                                  </p>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {otrosParticipantes.map(
+                                      (item) => {
+                                        const loadingId =
+                                          `${expense.id}-${item.user_id}`;
+
+                                        return (
+                                          <div
+                                            key={item.id}
+                                            className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                          >
+                                            <div className="flex justify-between gap-3">
+                                              <div>
+                                                <p className="font-semibold text-slate-900">
+                                                  {obtenerNombre(
+                                                    item.user_id
+                                                  )}
+                                                </p>
+
+                                                <p className="text-sm text-slate-600 mt-1">
+                                                  Debe pagar:{" "}
+                                                  {formatearMonto(
+                                                    item.amount
+                                                  )}
+                                                </p>
+                                              </div>
+
+                                              <div className="text-right">
+                                                {!item.accepted ? (
+                                                  <span className="text-xs font-semibold text-amber-700">
+                                                    Falta aceptar
+                                                  </span>
+                                                ) : !item.paid ? (
+                                                  <span className="text-xs font-semibold text-red-700">
+                                                    Falta pagar
+                                                  </span>
+                                                ) : item.payment_confirmed ? (
+                                                  <span className="text-xs font-semibold text-emerald-700">
+                                                    ✓ Confirmado
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-xs font-semibold text-blue-700">
+                                                    Pago por confirmar
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            {item.paid && (
+                                              <div className="mt-3 rounded-xl bg-white border border-slate-200 p-3">
+                                                <p className="text-sm text-slate-700">
+                                                  Pago registrado:{" "}
+                                                  {formatearMonto(
+                                                    item.payment_amount ||
+                                                      item.amount
+                                                  )}
+                                                </p>
+
+                                                {item.payment_at && (
+                                                  <p className="text-xs text-slate-500 mt-1">
+                                                    {formatearFechaHora(
+                                                      item.payment_at
+                                                    )}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            )}
+
+                                            {item.paid &&
+                                              item.payment_evidence_url && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    verComprobanteGastoCompartido(
+                                                      item.payment_evidence_url
+                                                    )
+                                                  }
+                                                  className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
+                                                >
+                                                  Ver comprobante
+                                                </button>
+                                              )}
+
+                                            {item.paid &&
+                                              !item.payment_confirmed && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    confirmarPagoGastoCompartido(
+                                                      expense.id,
+                                                      item.user_id
+                                                    )
+                                                  }
+                                                  disabled={
+                                                    responseLoading ===
+                                                    loadingId
+                                                  }
+                                                  className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                                                >
+                                                  {responseLoading ===
+                                                  loadingId
+                                                    ? "Confirmando..."
+                                                    : "Confirmar pago recibido"}
+                                                </button>
+                                              )}
+                                          </div>
+                                        );
+                                      }
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
-
-                        {participant && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="text-sm text-slate-700">
-                              Tu parte
-                            </p>
-
-                            <p className="text-xl font-bold text-slate-900">
-                              {formatearMonto(participant.amount)}
-                            </p>
-
-                            <p className="text-sm mt-2">
-                              {!participant.accepted
-                                ? "Debes confirmar tu participación."
-                                : participant.paid
-                                  ? "Ya marcaste este pago."
-                                  : "Tienes pendiente este pago."}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+                  )}
                 </div>
               )}
             </section>
           </div>
         )}
 
-        {/* =====================================================
+        {/* ====================================================
             HISTORIAL
-        ===================================================== */}
+        ==================================================== */}
 
         {activeTab === "historial" && (
           <div className="space-y-6">
+
+            {/* HISTORIAL PRÉSTAMOS */}
+
             <section>
               <h2 className="text-xl font-bold text-slate-900 mb-3">
                 Historial de préstamos
@@ -1866,119 +2390,142 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {historialPrestamos.map((loan) => {
-                    const payment = payments.find(
-                      (item) => item.loan_id === loan.id
-                    );
+                  {historialPrestamos.map(
+                    (loan) => {
+                      const payment =
+                        payments.find(
+                          (item) =>
+                            item.loan_id === loan.id
+                        );
 
-                    return (
-                      <div
-                        key={loan.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {loan.lender_id === currentUserId
-                                ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
-                                : `Te prestó ${obtenerNombre(
-                                  loan.lender_id
-                                )}`}
-                            </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              {loan.description || "Préstamo"}
-                            </p>
-                          </div>
-
-                          <p className="font-bold text-slate-900 whitespace-nowrap">
-                            {formatearMonto(loan.amount)}
-                          </p>
-                        </div>
-
-                        <div className="mt-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : loan.status === "rejected"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-slate-100 text-slate-700"
-                              }`}
-                          >
-                            {loan.status === "completed"
-                              ? "Completado"
-                              : loan.status === "rejected"
-                                ? "Rechazado"
-                                : "Cancelado"}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 text-sm text-slate-700 space-y-1">
-                          <p>
-                            Registrado:{" "}
-                            {formatearFecha(loan.created_at)}
-                          </p>
-
-                          <p>
-                            Fecha límite:{" "}
-                            {formatearFecha(loan.due_date)}
-                          </p>
-                        </div>
-
-                        {payment && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="font-semibold text-slate-900">
-                              Información del pago
-                            </p>
-
-                            <div className="mt-2 text-sm text-slate-700 space-y-1">
-                              <p>
-                                Pagado por:{" "}
-                                {obtenerNombre(payment.paid_by)}
+                      return (
+                        <div
+                          key={loan.id}
+                          className="bg-white rounded-3xl border border-slate-200 p-5"
+                        >
+                          <div className="flex justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {loan.lender_id ===
+                                currentUserId
+                                  ? `Le prestaste a ${obtenerNombre(
+                                      loan.borrower_id
+                                    )}`
+                                  : `Te prestó ${obtenerNombre(
+                                      loan.lender_id
+                                    )}`}
                               </p>
 
-                              <p>
-                                Monto pagado:{" "}
-                                {formatearMonto(payment.amount)}
-                              </p>
-
-                              <p>
-                                Fecha del pago:{" "}
-                                {formatearFechaHora(
-                                  payment.created_at
-                                )}
-                              </p>
-
-                              <p>
-                                Recepción:{" "}
-                                {payment.receiver_confirmed
-                                  ? "Confirmada"
-                                  : "Pendiente"}
+                              <p className="text-sm text-slate-700 mt-1">
+                                {loan.description ||
+                                  "Préstamo"}
                               </p>
                             </div>
 
-                            {payment.evidence_url && (
-                              <button
-                                onClick={() =>
-                                  verComprobante(
-                                    payment.evidence_url
-                                  )
-                                }
-                                className="w-full mt-4 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                              >
-                                Ver comprobante
-                              </button>
-                            )}
+                            <p className="font-bold text-slate-900 whitespace-nowrap">
+                              {formatearMonto(
+                                loan.amount
+                              )}
+                            </p>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
+
+                          <div className="mt-3">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-sm ${
+                                loan.status ===
+                                "completed"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : loan.status ===
+                                    "rejected"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              {loan.status ===
+                              "completed"
+                                ? "Completado"
+                                : loan.status ===
+                                  "rejected"
+                                ? "Rechazado"
+                                : "Cancelado"}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 text-sm text-slate-700 space-y-1">
+                            <p>
+                              Registrado:{" "}
+                              {formatearFecha(
+                                loan.created_at
+                              )}
+                            </p>
+
+                            <p>
+                              Fecha límite:{" "}
+                              {formatearFecha(
+                                loan.due_date
+                              )}
+                            </p>
+                          </div>
+
+                          {payment && (
+                            <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                              <p className="font-semibold text-slate-900">
+                                Información del pago
+                              </p>
+
+                              <div className="mt-2 text-sm text-slate-700 space-y-1">
+                                <p>
+                                  Pagado por:{" "}
+                                  {obtenerNombre(
+                                    payment.paid_by
+                                  )}
+                                </p>
+
+                                <p>
+                                  Monto pagado:{" "}
+                                  {formatearMonto(
+                                    payment.amount
+                                  )}
+                                </p>
+
+                                <p>
+                                  Fecha del pago:{" "}
+                                  {formatearFechaHora(
+                                    payment.created_at
+                                  )}
+                                </p>
+
+                                <p>
+                                  Recepción:{" "}
+                                  {payment.receiver_confirmed
+                                    ? "Confirmada"
+                                    : "Pendiente"}
+                                </p>
+                              </div>
+
+                              {payment.evidence_url && (
+                                <button
+                                  onClick={() =>
+                                    verComprobante(
+                                      payment.evidence_url
+                                    )
+                                  }
+                                  className="w-full mt-4 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                                >
+                                  Ver comprobante
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                  )}
                 </div>
               )}
             </section>
+
+            {/* HISTORIAL GASTOS */}
 
             <section>
               <h2 className="text-xl font-bold text-slate-900 mb-3">
@@ -1993,57 +2540,176 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {historialGastos.map((expense) => {
-                    const participant =
-                      sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
-                      );
+                  {historialGastos.map(
+                    (expense) => {
+                      const participants =
+                        sharedParticipants.filter(
+                          (item) =>
+                            item.expense_id ===
+                            expense.id
+                        );
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
+                      const miParticipacion =
+                        participants.find(
+                          (item) =>
+                            item.user_id ===
+                            currentUserId
+                        );
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Total{" "}
-                              {formatearMonto(
-                                expense.total_amount
-                              )}
-                            </p>
+                      return (
+                        <div
+                          key={expense.id}
+                          className="bg-white rounded-3xl border border-slate-200 p-5"
+                        >
+                          <div className="flex justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {expense.title}
+                              </p>
+
+                              <p className="text-sm text-slate-700 mt-1">
+                                Total:{" "}
+                                {formatearMonto(
+                                  expense.total_amount
+                                )}
+                              </p>
+
+                              <p className="text-sm text-slate-700 mt-1">
+                                Pagó el total:{" "}
+                                {obtenerNombre(
+                                  expense.created_by
+                                )}
+                              </p>
+                            </div>
+
+                            <span
+                              className={`inline-flex h-fit rounded-full px-3 py-1 text-sm ${
+                                expense.status ===
+                                "completed"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-red-100 text-red-700"
+                              }`}
+                            >
+                              {expense.status ===
+                              "completed"
+                                ? "Completado"
+                                : "Cancelado"}
+                            </span>
                           </div>
 
-                          {participant && (
-                            <p className="font-bold text-slate-900">
-                              {formatearMonto(
-                                participant.amount
+                          {miParticipacion && (
+                            <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                              <p className="font-semibold text-slate-900">
+                                Tu parte
+                              </p>
+
+                              <p className="text-xl font-bold text-slate-900 mt-1">
+                                {formatearMonto(
+                                  miParticipacion.amount
+                                )}
+                              </p>
+
+                              {miParticipacion.paid && (
+                                <p className="text-sm text-emerald-700 mt-2">
+                                  ✓ Pago registrado
+                                </p>
                               )}
-                            </p>
+
+                              {miParticipacion.payment_confirmed && (
+                                <p className="text-sm text-emerald-700 mt-1">
+                                  ✓ Pago confirmado
+                                </p>
+                              )}
+
+                              {miParticipacion.payment_evidence_url && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    verComprobanteGastoCompartido(
+                                      miParticipacion.payment_evidence_url
+                                    )
+                                  }
+                                  className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                                >
+                                  Ver comprobante
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {participants.length > 0 && (
+                            <div className="mt-4">
+                              <p className="text-sm font-semibold text-slate-900 mb-2">
+                                Participantes
+                              </p>
+
+                              <div className="space-y-2">
+                                {participants.map(
+                                  (item) => (
+                                    <div
+                                      key={item.id}
+                                      className="rounded-2xl border border-slate-200 bg-slate-50 p-3"
+                                    >
+                                      <div className="flex justify-between gap-3">
+                                        <div>
+                                          <p className="font-semibold text-slate-900">
+                                            {obtenerNombre(
+                                              item.user_id
+                                            )}
+                                          </p>
+
+                                          <p className="text-sm text-slate-600 mt-1">
+                                            Parte:{" "}
+                                            {formatearMonto(
+                                              item.amount
+                                            )}
+                                          </p>
+                                        </div>
+
+                                        <div className="text-right">
+                                          {item.payment_confirmed ? (
+                                            <span className="text-xs font-semibold text-emerald-700">
+                                              ✓ Confirmado
+                                            </span>
+                                          ) : item.paid ? (
+                                            <span className="text-xs font-semibold text-blue-700">
+                                              Pagó
+                                            </span>
+                                          ) : item.accepted ? (
+                                            <span className="text-xs font-semibold text-red-700">
+                                              Falta pagar
+                                            </span>
+                                          ) : (
+                                            <span className="text-xs font-semibold text-amber-700">
+                                              No aceptó
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {item.payment_evidence_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            verComprobanteGastoCompartido(
+                                              item.payment_evidence_url
+                                            )
+                                          }
+                                          className="w-full mt-3 rounded-xl bg-white border border-slate-300 text-slate-800 py-2.5 text-sm font-semibold"
+                                        >
+                                          Ver comprobante
+                                        </button>
+                                      )}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
-
-                        <div className="mt-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${expense.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-red-100 text-red-700"
-                              }`}
-                          >
-                            {expense.status === "completed"
-                              ? "Completado"
-                              : "Cancelado"}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+                  )}
                 </div>
               )}
             </section>
@@ -2051,40 +2717,50 @@ export default function Home() {
         )}
       </div>
 
-      {/* =====================================================
+      {/* ======================================================
           NAVEGACIÓN
-      ===================================================== */}
+      ====================================================== */}
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200">
         <div className="max-w-xl mx-auto grid grid-cols-3">
+
           <button
-            onClick={() => setActiveTab("prestamos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "prestamos"
-              ? "text-slate-900"
-              : "text-slate-500"
-              }`}
+            onClick={() =>
+              setActiveTab("prestamos")
+            }
+            className={`py-4 text-sm font-semibold ${
+              activeTab === "prestamos"
+                ? "text-slate-900"
+                : "text-slate-500"
+            }`}
           >
             <div className="text-xl">💸</div>
             Préstamos
           </button>
 
           <button
-            onClick={() => setActiveTab("gastos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "gastos"
-              ? "text-slate-900"
-              : "text-slate-500"
-              }`}
+            onClick={() =>
+              setActiveTab("gastos")
+            }
+            className={`py-4 text-sm font-semibold ${
+              activeTab === "gastos"
+                ? "text-slate-900"
+                : "text-slate-500"
+            }`}
           >
             <div className="text-xl">🍽️</div>
             Gastos
           </button>
 
           <button
-            onClick={() => setActiveTab("historial")}
-            className={`py-4 text-sm font-semibold ${activeTab === "historial"
-              ? "text-slate-900"
-              : "text-slate-500"
-              }`}
+            onClick={() =>
+              setActiveTab("historial")
+            }
+            className={`py-4 text-sm font-semibold ${
+              activeTab === "historial"
+                ? "text-slate-900"
+                : "text-slate-500"
+            }`}
           >
             <div className="text-xl">📋</div>
             Historial
@@ -2092,26 +2768,27 @@ export default function Home() {
         </div>
       </nav>
 
-      {/* =====================================================
+      {/* ======================================================
           MODAL GENERAL
-      ===================================================== */}
+      ====================================================== */}
 
       {modal && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center px-5">
           <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
             <div
-              className={`text-3xl mb-3 ${modal.type === "success"
-                ? "text-emerald-600"
-                : modal.type === "error"
+              className={`text-3xl mb-3 ${
+                modal.type === "success"
+                  ? "text-emerald-600"
+                  : modal.type === "error"
                   ? "text-red-600"
                   : "text-slate-700"
-                }`}
+              }`}
             >
               {modal.type === "success"
                 ? "✓"
                 : modal.type === "error"
-                  ? "!"
-                  : "i"}
+                ? "!"
+                : "i"}
             </div>
 
             <h3 className="text-xl font-bold text-slate-900">
@@ -2132,23 +2809,31 @@ export default function Home() {
         </div>
       )}
 
-      {/* =====================================================
-          MODAL REGISTRAR PAGO
-      ===================================================== */}
+      {/* ======================================================
+          MODAL REGISTRAR PAGO PRÉSTAMO
+      ====================================================== */}
 
       {paymentLoan && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+
             <h3 className="text-xl font-bold text-slate-900">
               Registrar pago
             </h3>
 
             <p className="text-sm text-slate-700 mt-1">
-              Pago de {formatearMonto(paymentLoan.amount)} a{" "}
-              {obtenerNombre(paymentLoan.lender_id)}
+              Pago de{" "}
+              {formatearMonto(
+                paymentLoan.amount
+              )}{" "}
+              a{" "}
+              {obtenerNombre(
+                paymentLoan.lender_id
+              )}
             </p>
 
-            <div className="space-y-3">
+            <div className="mt-5 space-y-3">
+
               <label className="block text-sm font-medium text-slate-700">
                 Comprobante del pago
               </label>
@@ -2165,12 +2850,16 @@ export default function Home() {
               {paymentFile ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <div className="flex items-start gap-3">
+
                     <div className="text-2xl">
-                      {paymentFile.type.startsWith("image/")
+                      {paymentFile.type.startsWith(
+                        "image/"
+                      )
                         ? "🖼️"
-                        : paymentFile.type === "application/pdf"
-                          ? "📄"
-                          : "📎"}
+                        : paymentFile.type ===
+                          "application/pdf"
+                        ? "📄"
+                        : "📎"}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -2183,7 +2872,12 @@ export default function Home() {
                       </p>
 
                       <p className="mt-1 text-xs text-emerald-700">
-                        {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
+                        {(
+                          paymentFile.size /
+                          1024 /
+                          1024
+                        ).toFixed(2)}{" "}
+                        MB
                       </p>
                     </div>
 
@@ -2192,9 +2886,10 @@ export default function Home() {
                       onClick={() => {
                         setPaymentFile(null);
 
-                        const input = document.getElementById(
-                          "payment-file"
-                        ) as HTMLInputElement | null;
+                        const input =
+                          document.getElementById(
+                            "payment-file"
+                          ) as HTMLInputElement | null;
 
                         if (input) {
                           input.value = "";
@@ -2214,6 +2909,7 @@ export default function Home() {
             </div>
 
             <div className="grid grid-cols-2 gap-2 mt-6">
+
               <button
                 onClick={cerrarRegistroPago}
                 disabled={paymentSending}
@@ -2228,6 +2924,138 @@ export default function Home() {
                 className="rounded-2xl bg-slate-900 text-white py-3 font-semibold disabled:opacity-50"
               >
                 {paymentSending
+                  ? "Guardando..."
+                  : "Registrar pago"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
+          MODAL REGISTRAR PAGO GASTO COMPARTIDO
+      ====================================================== */}
+
+      {sharedPaymentExpense && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+
+            <h3 className="text-xl font-bold text-slate-900">
+              Registrar pago
+            </h3>
+
+            <p className="text-sm text-slate-700 mt-1">
+              {sharedPaymentExpense.title}
+            </p>
+
+            <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+              <p className="text-sm text-slate-600">
+                Tu parte
+              </p>
+
+              <p className="text-2xl font-bold text-slate-900 mt-1">
+                {formatearMonto(
+                  sharedPaymentAmount
+                )}
+              </p>
+            </div>
+
+            <div className="mt-5 space-y-3">
+
+              <label className="block text-sm font-medium text-slate-700">
+                Comprobante del pago
+              </label>
+
+              <input
+                id="shared-payment-file"
+                type="file"
+                accept="image/*,.heic,.heif,.pdf"
+                multiple={false}
+                onChange={seleccionarComprobanteGasto}
+                className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
+              />
+
+              {sharedPaymentFile ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-start gap-3">
+
+                    <div className="text-2xl">
+                      {sharedPaymentFile.type.startsWith(
+                        "image/"
+                      )
+                        ? "🖼️"
+                        : sharedPaymentFile.type ===
+                          "application/pdf"
+                        ? "📄"
+                        : "📎"}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        Archivo seleccionado
+                      </p>
+
+                      <p className="mt-1 break-all text-sm text-emerald-800">
+                        {sharedPaymentFile.name}
+                      </p>
+
+                      <p className="mt-1 text-xs text-emerald-700">
+                        {(
+                          sharedPaymentFile.size /
+                          1024 /
+                          1024
+                        ).toFixed(2)}{" "}
+                        MB
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSharedPaymentFile(null);
+
+                        const input =
+                          document.getElementById(
+                            "shared-payment-file"
+                          ) as HTMLInputElement | null;
+
+                        if (input) {
+                          input.value = "";
+                        }
+                      }}
+                      className="min-h-[40px] min-w-[40px] rounded-lg bg-white px-3 text-sm font-semibold text-red-600 shadow-sm"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Puedes seleccionar una foto desde tu galería, tomar una foto o elegir un PDF.
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-6">
+
+              <button
+                type="button"
+                onClick={cerrarPagoGastoCompartido}
+                disabled={sharedPaymentSending}
+                className="rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  registrarPagoGastoCompartido
+                }
+                disabled={sharedPaymentSending}
+                className="rounded-2xl bg-slate-900 text-white py-3 font-semibold disabled:opacity-50"
+              >
+                {sharedPaymentSending
                   ? "Guardando..."
                   : "Registrar pago"}
               </button>
