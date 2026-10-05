@@ -187,6 +187,18 @@ export default function Home() {
     });
   }
 
+  function formatearFechaHora(value: string | null) {
+    if (!value) return "Sin fecha";
+
+    return new Date(value).toLocaleString("es-MX", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
   function obtenerNombre(userId: string) {
     if (userId === currentUserId) {
       return "Tú";
@@ -537,6 +549,33 @@ export default function Home() {
     setPaymentFile(null);
   }
 
+  function seleccionarComprobante(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0] || null;
+
+    if (!file) {
+      setPaymentFile(null);
+      return;
+    }
+
+    const maxSize = 10 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      mostrarModal(
+        "Archivo demasiado grande",
+        "El comprobante debe pesar máximo 10 MB.",
+        "error"
+      );
+
+      event.target.value = "";
+      setPaymentFile(null);
+      return;
+    }
+
+    setPaymentFile(file);
+  }
+
   async function registrarPago() {
     if (!paymentLoan || !currentUserId) return;
 
@@ -554,7 +593,7 @@ export default function Home() {
     if (!paymentFile) {
       mostrarModal(
         "Falta comprobante",
-        "Debes seleccionar una imagen o archivo como comprobante.",
+        "Debes seleccionar una imagen o PDF como comprobante.",
         "error"
       );
       return;
@@ -610,7 +649,7 @@ export default function Home() {
       const url = await verComprobanteService(path);
 
       if (url) {
-        window.open(url, "_blank");
+        window.open(url, "_blank", "noopener,noreferrer");
       }
     } catch (error: any) {
       console.error(error);
@@ -866,22 +905,22 @@ export default function Home() {
   // DATOS DERIVADOS
   // ============================================================
 
+  // Solo préstamos activos.
+  // Los pagos pendientes ya NO aparecen aquí.
   const misPrestamos = loans.filter(
     (loan) =>
-      (loan.status === "active" ||
-        loan.status === "payment_pending") &&
+      loan.status === "active" &&
       (loan.lender_id === currentUserId ||
         loan.borrower_id === currentUserId)
   );
 
-  // Ahora las solicitudes aparecen al DEUDOR,
-  // porque él es quien debe confirmar que recibió el préstamo.
   const prestamosPorConfirmar = loans.filter(
     (loan) =>
       loan.status === "pending" &&
       loan.borrower_id === currentUserId
   );
 
+  // Solo los pagos que el prestamista debe revisar.
   const pagosPendientes = loans.filter(
     (loan) =>
       loan.status === "payment_pending" &&
@@ -1128,6 +1167,18 @@ export default function Home() {
                         </p>
                       </div>
 
+                      <div className="mt-4 text-sm text-slate-700 space-y-1">
+                        <p>
+                          Fecha del registro:{" "}
+                          {formatearFecha(loan.created_at)}
+                        </p>
+
+                        <p>
+                          Fecha límite:{" "}
+                          {formatearFecha(loan.due_date)}
+                        </p>
+                      </div>
+
                       <p className="text-sm text-amber-800 mt-4">
                         Confirma si efectivamente recibiste este préstamo.
                       </p>
@@ -1187,10 +1238,6 @@ export default function Home() {
                     const soyDeudor =
                       loan.borrower_id === currentUserId;
 
-                    const payment = payments.find(
-                      (item) => item.loan_id === loan.id
-                    );
-
                     return (
                       <div
                         key={loan.id}
@@ -1218,69 +1265,36 @@ export default function Home() {
                           </p>
                         </div>
 
-                        <div className="mt-4 text-sm text-slate-700">
-                          Fecha límite:{" "}
-                          {formatearFecha(loan.due_date)}
+                        <div className="mt-4 text-sm text-slate-700 space-y-1">
+                          <p>
+                            Registrado:{" "}
+                            {formatearFecha(loan.created_at)}
+                          </p>
+
+                          <p>
+                            Fecha límite:{" "}
+                            {formatearFecha(loan.due_date)}
+                          </p>
                         </div>
 
                         <div className="mt-4">
-                          {loan.status === "active" &&
-                            soyDeudor && (
-                              <button
-                                onClick={() =>
-                                  abrirRegistroPago(loan)
-                                }
-                                className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                              >
-                                Registrar pago
-                              </button>
-                            )}
+                          {soyDeudor && (
+                            <button
+                              onClick={() =>
+                                abrirRegistroPago(loan)
+                              }
+                              className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                            >
+                              Registrar pago
+                            </button>
+                          )}
 
-                          {loan.status === "payment_pending" &&
-                            soyPrestamista && (
-                              <div className="space-y-2">
-                                <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                                  La persona que te debía registró un
-                                  pago. Revisa el comprobante y confirma
-                                  si recibiste el dinero.
-                                </div>
-
-                                {payment?.evidence_url && (
-                                  <button
-                                    onClick={() =>
-                                      verComprobante(
-                                        payment.evidence_url
-                                      )
-                                    }
-                                    className="w-full rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
-                                  >
-                                    Ver comprobante
-                                  </button>
-                                )}
-
-                                <button
-                                  onClick={() =>
-                                    confirmarRecepcion(loan.id)
-                                  }
-                                  disabled={
-                                    responseLoading === loan.id
-                                  }
-                                  className="w-full rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
-                                >
-                                  {responseLoading === loan.id
-                                    ? "Confirmando..."
-                                    : "Confirmar que recibí el pago"}
-                                </button>
-                              </div>
-                            )}
-
-                          {loan.status === "payment_pending" &&
-                            soyDeudor && (
-                              <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                                Pago enviado. Esperando que el
-                                prestamista confirme que recibió el dinero.
-                              </div>
-                            )}
+                          {soyPrestamista && (
+                            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
+                              Esperando el pago de{" "}
+                              {obtenerNombre(loan.borrower_id)}.
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -1306,18 +1320,78 @@ export default function Home() {
                     return (
                       <div
                         key={loan.id}
-                        className="bg-white rounded-3xl border border-amber-200 p-5"
+                        className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
                       >
-                        <p className="font-semibold text-slate-900">
-                          {obtenerNombre(loan.borrower_id)}
-                        </p>
+                        <div className="flex justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {obtenerNombre(loan.borrower_id)}
+                            </p>
 
-                        <p className="text-sm text-slate-700 mt-1">
-                          Registró un pago de{" "}
-                          {formatearMonto(
-                            payment?.amount || loan.amount
-                          )}
-                        </p>
+                            <p className="text-sm text-slate-700 mt-1">
+                              Registró un pago de este préstamo.
+                            </p>
+
+                            <p className="text-sm text-slate-700 mt-1">
+                              {loan.description || "Préstamo"}
+                            </p>
+                          </div>
+
+                          <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
+                            {formatearMonto(
+                              payment?.amount || loan.amount
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="mt-4 text-sm text-slate-700 space-y-1">
+                          <p>
+                            Préstamo original:{" "}
+                            {formatearMonto(loan.amount)}
+                          </p>
+
+                          <p>
+                            Pago registrado:{" "}
+                            {formatearMonto(
+                              payment?.amount || loan.amount
+                            )}
+                          </p>
+
+                          <p>
+                            Fecha del pago:{" "}
+                            {formatearFechaHora(
+                              payment?.created_at || null
+                            )}
+                          </p>
+
+                          <p>
+                            Fecha límite original:{" "}
+                            {formatearFecha(loan.due_date)}
+                          </p>
+                        </div>
+
+                        {loan.description && (
+                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="text-xs font-semibold text-slate-500 uppercase">
+                              Concepto
+                            </p>
+
+                            <p className="text-sm text-slate-900 mt-1">
+                              {loan.description}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                          <p className="font-semibold text-amber-900">
+                            Revisa el comprobante
+                          </p>
+
+                          <p className="text-sm text-amber-800 mt-1">
+                            Confirma la recepción solamente si
+                            efectivamente recibiste este pago.
+                          </p>
+                        </div>
 
                         {payment?.evidence_url && (
                           <button
@@ -1326,7 +1400,7 @@ export default function Home() {
                                 payment.evidence_url
                               )
                             }
-                            className="w-full mt-3 rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                            className="w-full mt-4 rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
                           >
                             Ver comprobante
                           </button>
@@ -1722,52 +1796,117 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {historialPrestamos.map((loan) => (
-                    <div
-                      key={loan.id}
-                      className="bg-white rounded-3xl border border-slate-200 p-5"
-                    >
-                      <div className="flex justify-between gap-4">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            {loan.lender_id === currentUserId
-                              ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
-                              : `Te prestó ${obtenerNombre(
-                                  loan.lender_id
-                                )}`}
-                          </p>
+                  {historialPrestamos.map((loan) => {
+                    const payment = payments.find(
+                      (item) => item.loan_id === loan.id
+                    );
 
-                          <p className="text-sm text-slate-700 mt-1">
-                            {loan.description || "Préstamo"}
+                    return (
+                      <div
+                        key={loan.id}
+                        className="bg-white rounded-3xl border border-slate-200 p-5"
+                      >
+                        <div className="flex justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {loan.lender_id === currentUserId
+                                ? `Le prestaste a ${obtenerNombre(
+                                    loan.borrower_id
+                                  )}`
+                                : `Te prestó ${obtenerNombre(
+                                    loan.lender_id
+                                  )}`}
+                            </p>
+
+                            <p className="text-sm text-slate-700 mt-1">
+                              {loan.description || "Préstamo"}
+                            </p>
+                          </div>
+
+                          <p className="font-bold text-slate-900 whitespace-nowrap">
+                            {formatearMonto(loan.amount)}
                           </p>
                         </div>
 
-                        <p className="font-bold text-slate-900">
-                          {formatearMonto(loan.amount)}
-                        </p>
-                      </div>
-
-                      <div className="mt-3">
-                        <span
-                          className={`inline-flex rounded-full px-3 py-1 text-sm ${
-                            loan.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700"
+                        <div className="mt-3">
+                          <span
+                            className={`inline-flex rounded-full px-3 py-1 text-sm ${
+                              loan.status === "completed"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : loan.status === "rejected"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {loan.status === "completed"
+                              ? "Completado"
                               : loan.status === "rejected"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-700"
-                          }`}
-                        >
-                          {loan.status === "completed"
-                            ? "Completado"
-                            : loan.status === "rejected"
-                            ? "Rechazado"
-                            : "Cancelado"}
-                        </span>
+                              ? "Rechazado"
+                              : "Cancelado"}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 text-sm text-slate-700 space-y-1">
+                          <p>
+                            Registrado:{" "}
+                            {formatearFecha(loan.created_at)}
+                          </p>
+
+                          <p>
+                            Fecha límite:{" "}
+                            {formatearFecha(loan.due_date)}
+                          </p>
+                        </div>
+
+                        {payment && (
+                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="font-semibold text-slate-900">
+                              Información del pago
+                            </p>
+
+                            <div className="mt-2 text-sm text-slate-700 space-y-1">
+                              <p>
+                                Pagado por:{" "}
+                                {obtenerNombre(payment.paid_by)}
+                              </p>
+
+                              <p>
+                                Monto pagado:{" "}
+                                {formatearMonto(payment.amount)}
+                              </p>
+
+                              <p>
+                                Fecha del pago:{" "}
+                                {formatearFechaHora(
+                                  payment.created_at
+                                )}
+                              </p>
+
+                              <p>
+                                Recepción:{" "}
+                                {payment.receiver_confirmed
+                                  ? "Confirmada"
+                                  : "Pendiente"}
+                              </p>
+                            </div>
+
+                            {payment.evidence_url && (
+                              <button
+                                onClick={() =>
+                                  verComprobante(
+                                    payment.evidence_url
+                                  )
+                                }
+                                className="w-full mt-4 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                              >
+                                Ver comprobante
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>
@@ -1934,8 +2073,8 @@ export default function Home() {
       ===================================================== */}
 
       {paymentLoan && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold text-slate-900">
               Registrar pago
             </h3>
@@ -1964,15 +2103,36 @@ export default function Home() {
 
                 <input
                   type="file"
-                  accept="image/*,.pdf"
-                  onChange={(event) =>
-                    setPaymentFile(
-                      event.target.files?.[0] || null
-                    )
-                  }
-                  className="w-full text-sm text-slate-900"
+                  accept="image/*,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf"
+                  onChange={seleccionarComprobante}
+                  className="block w-full text-sm text-slate-900 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-900 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white"
                 />
+
+                <p className="text-xs text-slate-500 mt-2">
+                  Puedes seleccionar una foto, imagen o PDF. Máximo 10 MB.
+                </p>
               </label>
+
+              {paymentFile && (
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                  <p className="text-sm font-semibold text-slate-900 break-all">
+                    {paymentFile.name}
+                  </p>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentFile(null)}
+                    disabled={paymentSending}
+                    className="mt-3 text-sm font-semibold text-red-600"
+                  >
+                    Quitar comprobante
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2 mt-6">
