@@ -131,6 +131,22 @@ export default function Home() {
     "prestamos" | "gastos" | "historial"
   >("prestamos");
 
+  useEffect(() => {
+    const tabGuardada = localStorage.getItem("activeTab");
+
+    if (
+      tabGuardada === "prestamos" ||
+      tabGuardada === "gastos" ||
+      tabGuardada === "historial"
+    ) {
+      setActiveTab(tabGuardada);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("activeTab", activeTab);
+  }, [activeTab]);
+
   // ============================================================
   // PRÉSTAMOS
   // ============================================================
@@ -1736,8 +1752,8 @@ export default function Home() {
                             type="button"
                             onClick={() => toggleSharedExpenseUser(user.id)}
                             className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
-                                ? "border-slate-900 bg-slate-100"
-                                : "border-slate-200 bg-white"
+                              ? "border-slate-900 bg-slate-100"
+                              : "border-slate-200 bg-white"
                               }`}
                           >
                             <span>{user.full_name || user.email}</span>
@@ -1761,8 +1777,8 @@ export default function Home() {
                             type="button"
                             onClick={() => setSharedExpenseMode("equal")}
                             className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "equal"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
                               }`}
                           >
                             Partes iguales
@@ -1772,8 +1788,8 @@ export default function Home() {
                             type="button"
                             onClick={() => setSharedExpenseMode("custom")}
                             className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "custom"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
                               }`}
                           >
                             Cantidades
@@ -1796,8 +1812,8 @@ export default function Home() {
                           <p className="text-sm text-slate-700 mt-2">
                             Tu parte: {formatearMonto(
                               Number(sharedExpenseTotal || 0) -
-                                obtenerCantidadCompartida(sharedExpenseUsers[0]) *
-                                  sharedExpenseUsers.length
+                              obtenerCantidadCompartida(sharedExpenseUsers[0]) *
+                              sharedExpenseUsers.length
                             )}
                           </p>
                         </div>
@@ -2009,12 +2025,12 @@ export default function Home() {
 
                           <span
                             className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "active"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : expense.status === "pending"
-                                  ? "bg-amber-100 text-amber-700"
-                                  : expense.status === "completed"
-                                    ? "bg-blue-100 text-blue-700"
-                                    : "bg-red-100 text-red-700"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : expense.status === "pending"
+                                ? "bg-amber-100 text-amber-700"
+                                : expense.status === "completed"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : "bg-red-100 text-red-700"
                               }`}
                           >
                             {expense.status === "active"
@@ -2345,10 +2361,10 @@ export default function Home() {
                         <div className="mt-3">
                           <span
                             className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status === "completed"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : loan.status === "rejected"
-                                  ? "bg-red-100 text-red-700"
-                                  : "bg-slate-100 text-slate-700"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : loan.status === "rejected"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-slate-100 text-slate-700"
                               }`}
                           >
                             {loan.status === "completed"
@@ -2454,8 +2470,8 @@ export default function Home() {
 
                           <span
                             className={`inline-flex h-fit rounded-full px-3 py-1 text-sm ${expense.status === "completed"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-red-100 text-red-700"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-red-100 text-red-700"
                               }`}
                           >
                             {expense.status === "completed"
@@ -2618,10 +2634,10 @@ export default function Home() {
           <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
             <div
               className={`text-3xl mb-3 ${modal.type === "success"
-                  ? "text-emerald-600"
-                  : modal.type === "error"
-                    ? "text-red-600"
-                    : "text-slate-700"
+                ? "text-emerald-600"
+                : modal.type === "error"
+                  ? "text-red-600"
+                  : "text-slate-700"
                 }`}
             >
               {modal.type === "success"
