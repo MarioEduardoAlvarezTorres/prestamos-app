@@ -1241,14 +1241,22 @@ export default function Home() {
   const misGastosCompartidos = sharedExpenses.filter((expense) => {
     if (!currentUserId) return false;
 
-    // En "Mis gastos compartidos" solo mostramos gastos activos
-    if (expense.status !== "active") return false;
+    // Los completados y cancelados solo aparecen en Historial
+    if (
+      expense.status === "completed" ||
+      expense.status === "cancelled"
+    ) {
+      return false;
+    }
 
     const participantes = sharedParticipants.filter(
       (participant) => participant.expense_id === expense.id
     );
 
-    // Si todos ya pagaron, ya no debe aparecer aquí.
+    const soyCreador = expense.created_by === currentUserId;
+
+    // Si todos los participantes ya pagaron,
+    // el gasto deja de mostrarse en Mis gastos.
     const todosPagaron =
       participantes.length > 0 &&
       participantes.every((participant) => participant.paid);
@@ -1256,7 +1264,7 @@ export default function Home() {
     if (todosPagaron) return false;
 
     return (
-      expense.created_by === currentUserId ||
+      soyCreador ||
       participantes.some(
         (participant) => participant.user_id === currentUserId
       )
