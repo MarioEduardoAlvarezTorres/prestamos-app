@@ -183,19 +183,12 @@ export default function Home() {
 
     const { error: acceptanceError } = await supabase
       .from("loan_acceptances")
-      .insert([
-        {
-          loan_id: data.id,
-          user_id: session.user.id,
-          accepted: true,
-          accepted_at: new Date().toISOString(),
-        },
-        {
-          loan_id: data.id,
-          user_id: selectedUser.id,
-          accepted: false,
-        },
-      ]);
+      .insert({
+        loan_id: data.id,
+        user_id: session.user.id,
+        accepted: true,
+        accepted_at: new Date().toISOString(),
+      });
 
     if (acceptanceError) {
       console.error(acceptanceError);
