@@ -337,36 +337,36 @@ export default function Home() {
   // =========================
 
   useEffect(() => {
-  loadData();
+    loadData();
 
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
-    console.log("AUTH EVENT:", _event);
-    console.log("AUTH SESSION:", session);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("AUTH EVENT:", _event);
+      console.log("AUTH SESSION:", session);
 
-    if (session) {
-      setCurrentUserId(session.user.id);
-      setEmail(session.user.email || "");
+      if (session) {
+        setCurrentUserId(session.user.id);
+        setEmail(session.user.email || "");
 
-      setTimeout(() => {
-        loadData();
-      }, 0);
-    } else {
-      setCurrentUserId(null);
-      setEmail("");
-      setLoans([]);
-      setPayments([]);
-      setUsers([]);
-      setSharedExpenses([]);
-      setSharedParticipants([]);
-    }
-  });
+        setTimeout(() => {
+          loadData();
+        }, 0);
+      } else {
+        setCurrentUserId(null);
+        setEmail("");
+        setLoans([]);
+        setPayments([]);
+        setUsers([]);
+        setSharedExpenses([]);
+        setSharedParticipants([]);
+      }
+    });
 
-  return () => {
-    subscription.unsubscribe();
-  };
-}, []);
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     function handleBeforeInstallPrompt(event: Event) {
@@ -456,69 +456,55 @@ export default function Home() {
   // PRÉSTAMOS
   // ============================================================
 
-  async function solicitarPrestamo() {
-    if (!selectedUser) {
-      mostrarModal(
-        "Falta una persona",
-        "Selecciona a quién quieres prestar el dinero.",
-        "error"
-      );
-      return;
+  export async function solicitarPrestamo(params: {
+    lenderId: string;
+    amount: number;
+    description: string;
+    dueDate: string | null;
+  }) {
+    const supabase = createClient();
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session) {
+      throw new Error("No hay una sesión activa.");
     }
 
-    const numero = Number(amount);
-
-    if (!numero || numero <= 0) {
-      mostrarModal(
-        "Monto inválido",
-        "Escribe un monto mayor a cero.",
-        "error"
-      );
-      return;
+    if (params.lenderId === session.user.id) {
+      throw new Error("No puedes solicitarte un préstamo a ti mismo.");
     }
 
-    if (selectedUser === currentUserId) {
-      mostrarModal(
-        "Persona inválida",
-        "No puedes solicitarte un préstamo a ti mismo.",
-        "error"
-      );
-      return;
-    }
+    const { data, error } = await supabase
+      .from("loans")
+      .insert({
+        lender_id: params.lenderId,
+        borrower_id: session.user.id,
+        amount: params.amount,
+        description: params.description || null,
+        due_date: params.dueDate,
+        status: "pending",
+      })
+      .select()
+      .single();
 
-    try {
-      setSending(true);
+    if (error) throw error;
 
-      await solicitarPrestamoService({
-        borrowerId: selectedUser,
-        amount: numero,
-        description: description.trim(),
-        dueDate: dueDate || null,
+    // El solicitante queda aceptado automáticamente.
+    // La otra persona es quien debe autorizar el préstamo.
+    const { error: acceptanceError } = await supabase
+      .from("loan_acceptances")
+      .insert({
+        loan_id: data.id,
+        user_id: session.user.id,
+        accepted: true,
+        accepted_at: new Date().toISOString(),
       });
 
-      setSelectedUser("");
-      setAmount("");
-      setDescription("");
-      setDueDate("");
+    if (acceptanceError) throw acceptanceError;
 
-      await loadData();
-
-      mostrarModal(
-        "Solicitud enviada",
-        "La otra persona debe aceptar el préstamo para que quede activo.",
-        "success"
-      );
-    } catch (error: any) {
-      console.error(error);
-
-      mostrarModal(
-        "No se pudo crear",
-        error?.message || "Ocurrió un error creando el préstamo.",
-        "error"
-      );
-    } finally {
-      setSending(false);
-    }
+    return data;
   }
 
   // =========================
