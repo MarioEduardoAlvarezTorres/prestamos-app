@@ -3,6 +3,19 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
+import {
+  solicitarPrestamo as solicitarPrestamoService,
+  responderSolicitud as responderSolicitudService,
+  confirmarRecepcion as confirmarRecepcionService,
+  registrarPago as registrarPagoService,
+  verComprobante as verComprobanteService,
+} from "../lib/prestamos";
+
+import {
+  crearGastoCompartido as crearGastoCompartidoService,
+  responderGastoCompartido as responderGastoCompartidoService,
+} from "../lib/gastos";
+
 type Profile = {
   id: string;
   full_name: string | null;
@@ -18,7 +31,7 @@ type Loan = {
   borrower_id: string;
   amount: number;
   description: string | null;
-  due_date: string;
+  due_date: string | null;
   status:
   | "pending"
   | "active"
@@ -41,50 +54,306 @@ type Payment = {
   created_at: string;
 };
 
+type SharedExpense = {
+  id: string;
+  created_by: string;
+  title: string;
+  description: string | null;
+  total_amount: number;
+  status: "pending" | "active" | "completed" | "cancelled";
+  created_at: string;
+  updated_at: string;
+};
+
+type SharedExpenseParticipant = {
+  id: string;
+  expense_id: string;
+  user_id: string;
+  amount: number;
+  accepted: boolean;
+  accepted_at: string | null;
+  paid: boolean;
+  created_at: string;
+};
+
 type ModalData = {
   title: string;
   message: string;
-  type: "success" | "error" | "info";
+  type?: "success" | "error" | "info";
 };
 
 export default function Home() {
   const supabase = createClient();
 
+  // =========================
+  // SESIÓN
+  // =========================
+
   const [email, setEmail] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // =========================
+  // DATOS
+  // =========================
 
   const [users, setUsers] = useState<Profile[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+
+  const [sharedExpenses, setSharedExpenses] = useState<SharedExpense[]>([]);
+  const [sharedParticipants, setSharedParticipants] = useState<
+    SharedExpenseParticipant[]
+  >([]);
+
+  // =========================
+  // NAVEGACIÓN
+  // =========================
+
+  const [activeTab, setActiveTab] = useState<
+    "prestamos" | "gastos" | "historial"
+  >("prestamos");
+
+  // =========================
+  // PRÉSTAMOS
+  // =========================
 
   const [selectedUser, setSelectedUser] = useState("");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
 
+  // =========================
+  // PAGOS DE PRÉSTAMOS
+  // =========================
+
   const [paymentLoan, setPaymentLoan] = useState<Loan | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentFile, setPaymentFile] = useState<File | null>(null);
+
+  // =========================
+  // GASTOS COMPARTIDOS
+  // =========================
+
+  const [showSharedExpenseForm, setShowSharedExpenseForm] = useState(false);
+
+  const [sharedExpenseTitle, setSharedExpenseTitle] = useState("");
+  const [sharedExpenseDescription, setSharedExpenseDescription] =
+    useState("");
+  const [sharedExpenseTotal, setSharedExpenseTotal] = useState("");
+
+  const [sharedExpenseUsers, setSharedExpenseUsers] = useState<string[]>([]);
+
+  const [sharedExpenseMode, setSharedExpenseMode] = useState<
+    "equal" | "custom"
+  >("equal");
+
+  const [sharedCustomAmounts, setSharedCustomAmounts] = useState<
+    Record<string, string>
+  >({});
+
+  // =========================
+  // ESTADOS GENERALES
+  // =========================
 
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [paymentSending, setPaymentSending] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [responseLoading, setResponseLoading] = useState<string | null>(null);
+  const [sharedExpenseLoading, setSharedExpenseLoading] = useState(false);
 
   const [modal, setModal] = useState<ModalData | null>(null);
+
   const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<"inicio" | "historial">(
-    "inicio"
-  );
+
+  // =========================
+  // HELPERS
+  // =========================
+
+  function mostrarModal(
+    title: string,
+    message: string,
+    type: "success" | "error" | "info" = "info"
+  ) {
+    setModal({
+      title,
+      message,
+      type,
+    });
+  }
+
+  function cerrarModal() {
+    setModal(null);
+  }
+
+  function formatearMonto(value: number | string) {
+    const numero = Number(value || 0);
+
+    return numero.toLocaleString("es-MX", {
+      style: "currency",
+      currency: "MXN",
+    });
+  }
+
+  function formatearFecha(value: string | null) {
+    if (!value) return "Sin fecha";
+
+    return new Date(value).toLocaleDateString("es-MX", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
+  function obtenerNombre(userId: string) {
+    if (userId === currentUserId) {
+      return "Tú";
+    }
+
+    const user = users.find((item) => item.id === userId);
+
+    return user?.full_name || user?.email || "Usuario";
+  }
+
+  // =========================
+  // CARGAR DATOS
+  // =========================
+
+  async function loadData() {
+    try {
+      setLoading(true);
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setCurrentUserId(null);
+        setEmail("");
+        setLoading(false);
+        return;
+      }
+
+      const userId = session.user.id;
+
+      setCurrentUserId(userId);
+      setEmail(session.user.email || "");
+
+      // -------------------------
+      // USUARIOS
+      // -------------------------
+
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select(
+          "id, full_name, email, avatar_url, is_admin, is_active"
+        )
+        .eq("is_active", true)
+        .neq("id", userId)
+        .order("full_name", { ascending: true });
+
+      if (profilesError) {
+        console.error("Error cargando usuarios:", profilesError);
+      } else {
+        setUsers(profilesData || []);
+      }
+
+      // -------------------------
+      // PRÉSTAMOS
+      // -------------------------
+
+      const { data: loansData, error: loansError } = await supabase
+        .from("loans")
+        .select("*")
+        .or(`lender_id.eq.${userId},borrower_id.eq.${userId}`)
+        .order("created_at", { ascending: false });
+
+      if (loansError) {
+        console.error("Error cargando préstamos:", loansError);
+      } else {
+        setLoans(loansData || []);
+      }
+
+      // -------------------------
+      // PAGOS
+      // -------------------------
+
+      const { data: paymentsData, error: paymentsError } = await supabase
+        .from("loan_payments")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (paymentsError) {
+        console.error("Error cargando pagos:", paymentsError);
+      } else {
+        setPayments(paymentsData || []);
+      }
+
+      // -------------------------
+      // GASTOS COMPARTIDOS
+      // -------------------------
+
+      const { data: expensesData, error: expensesError } = await supabase
+        .from("shared_expenses")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (expensesError) {
+        console.error(
+          "Error cargando gastos compartidos:",
+          expensesError
+        );
+      } else {
+        setSharedExpenses(expensesData || []);
+      }
+
+      // -------------------------
+      // PARTICIPANTES
+      // -------------------------
+
+      const { data: participantsData, error: participantsError } =
+        await supabase
+          .from("shared_expense_participants")
+          .select("*");
+
+      if (participantsError) {
+        console.error(
+          "Error cargando participantes:",
+          participantsError
+        );
+      } else {
+        setSharedParticipants(participantsData || []);
+      }
+    } catch (error) {
+      console.error("Error general cargando datos:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // =========================
+  // EFECTOS
+  // =========================
 
   useEffect(() => {
     loadData();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      loadData();
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setCurrentUserId(session.user.id);
+        setEmail(session.user.email || "");
+        loadData();
+      } else {
+        setCurrentUserId(null);
+        setEmail("");
+        setLoans([]);
+        setPayments([]);
+        setUsers([]);
+        setSharedExpenses([]);
+        setSharedParticipants([]);
+      }
     });
 
     return () => {
@@ -93,20 +362,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js").catch((error) => {
-          console.error("Error registrando Service Worker:", error);
-        });
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (event: Event) => {
+    function handleBeforeInstallPrompt(event: Event) {
       event.preventDefault();
       setInstallPrompt(event);
-    };
+    }
 
     window.addEventListener(
       "beforeinstallprompt",
@@ -121,154 +380,88 @@ export default function Home() {
     };
   }, []);
 
-  async function instalarAplicacion() {
-    if (!installPrompt) {
-      return;
-    }
-
-    installPrompt.prompt();
-
-    await installPrompt.userChoice;
-
-    setInstallPrompt(null);
-  }
-
-  async function loadData() {
-    setLoading(true);
-
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        setCurrentUserId(null);
-        setEmail("");
-        return;
-      }
-
-      setCurrentUserId(session.user.id);
-      setEmail(session.user.email ?? "");
-
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select(
-          "id, full_name, email, avatar_url, is_admin, is_active"
-        )
-        .eq("is_active", true)
-        .neq("id", session.user.id)
-        .order("full_name");
-
-      if (profilesError) {
-        console.error("Error cargando perfiles:", profilesError);
-      }
-
-      setUsers(profiles ?? []);
-
-      const { data: loanData, error: loanError } = await supabase
-        .from("loans")
-        .select(
-          "id, lender_id, borrower_id, amount, description, due_date, status, created_at, updated_at"
-        )
-        .or(
-          `borrower_id.eq.${session.user.id},lender_id.eq.${session.user.id}`
-        )
-        .in("status", [
-          "pending",
-          "active",
-          "payment_pending",
-          "completed",
-          "rejected",
-          "cancelled",
-        ])
-        .order("created_at", { ascending: false });
-
-      if (loanError) {
-        console.error("Error cargando préstamos:", loanError);
-      }
-
-      setLoans(loanData ?? []);
-
-      const { data: paymentData, error: paymentError } = await supabase
-        .from("loan_payments")
-        .select(
-          "id, loan_id, paid_by, amount, evidence_url, payer_confirmed, receiver_confirmed, created_at"
-        )
-        .order("created_at", { ascending: false });
-
-      if (paymentError) {
-        console.error("Error cargando pagos:", paymentError);
-      }
-
-      setPayments(paymentData ?? []);
-    } catch (error) {
-      console.error("Error inesperado en loadData:", error);
-
-      mostrarModal(
-        "Error",
-        "No se pudieron cargar los datos de la aplicación.",
-        "error"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  // =========================
+  // LOGIN
+  // =========================
 
   async function loginWithGoogle() {
-    setLoginLoading(true);
+    try {
+      setLoginLoading(true);
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+    } catch (error: any) {
       console.error(error);
-      mostrarModal("No se pudo iniciar sesión", error.message, "error");
+
+      mostrarModal(
+        "No se pudo iniciar sesión",
+        error?.message || "Ocurrió un error al iniciar sesión.",
+        "error"
+      );
+
       setLoginLoading(false);
     }
   }
 
+  // =========================
+  // LOGOUT
+  // =========================
+
   async function cerrarSesion() {
     await supabase.auth.signOut();
+
     setCurrentUserId(null);
     setEmail("");
     setLoans([]);
     setPayments([]);
     setUsers([]);
+    setSharedExpenses([]);
+    setSharedParticipants([]);
   }
 
-  function mostrarModal(
-    title: string,
-    message: string,
-    type: "success" | "error" | "info"
-  ) {
-    setModal({
-      title,
-      message,
-      type,
-    });
+  // =========================
+  // PWA
+  // =========================
+
+  async function instalarAplicacion() {
+    if (!installPrompt) return;
+
+    installPrompt.prompt();
+
+    try {
+      await installPrompt.userChoice;
+    } catch {
+      // No hacemos nada si el usuario cancela.
+    }
+
+    setInstallPrompt(null);
   }
 
-  function cerrarModal() {
-    setModal(null);
-  }
+  // ============================================================
+  // PRÉSTAMOS
+  // ============================================================
 
   async function solicitarPrestamo() {
-    if (!currentUserId) return;
-
     if (!selectedUser) {
       mostrarModal(
-        "Falta seleccionar una persona",
-        "Selecciona a quién quieres solicitar el préstamo.",
+        "Falta una persona",
+        "Selecciona a quién quieres prestar el dinero.",
         "error"
       );
       return;
     }
 
-    if (!amount || Number(amount) <= 0) {
+    const numero = Number(amount);
+
+    if (!numero || numero <= 0) {
       mostrarModal(
         "Monto inválido",
         "Escribe un monto mayor a cero.",
@@ -277,147 +470,88 @@ export default function Home() {
       return;
     }
 
-    if (!dueDate) {
+    if (selectedUser === currentUserId) {
       mostrarModal(
-        "Falta la fecha límite",
-        "Selecciona una fecha límite para el préstamo.",
+        "Persona inválida",
+        "No puedes solicitarte un préstamo a ti mismo.",
         "error"
       );
       return;
     }
 
-    setSending(true);
+    try {
+      setSending(true);
 
-    const { data, error } = await supabase
-      .from("loans")
-      .insert({
-        lender_id: selectedUser,
-        borrower_id: currentUserId,
-        amount: Number(amount),
-        description: description.trim() || null,
-        due_date: dueDate,
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error(error);
-      mostrarModal(
-        "No se pudo crear el préstamo",
-        error.message,
-        "error"
-      );
-      setSending(false);
-      return;
-    }
-
-    const { error: acceptanceError } = await supabase
-      .from("loan_acceptances")
-      .insert({
-        loan_id: data.id,
-        user_id: currentUserId,
-        accepted: true,
-        accepted_at: new Date().toISOString(),
+      await solicitarPrestamoService({
+        borrowerId: selectedUser,
+        amount: numero,
+        description: description.trim(),
+        dueDate: dueDate || null,
       });
 
-    if (acceptanceError) {
-      console.error(acceptanceError);
+      setSelectedUser("");
+      setAmount("");
+      setDescription("");
+      setDueDate("");
+
+      await loadData();
+
       mostrarModal(
-        "Préstamo creado",
-        "El préstamo se creó, pero hubo un problema registrando tu aceptación.",
+        "Solicitud enviada",
+        "La otra persona debe aceptar el préstamo para que quede activo.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo crear",
+        error?.message || "Ocurrió un error creando el préstamo.",
         "error"
       );
+    } finally {
       setSending(false);
-      await loadData();
-      return;
     }
-
-    setSelectedUser("");
-    setAmount("");
-    setDescription("");
-    setDueDate("");
-
-    await loadData();
-
-    mostrarModal(
-      "Solicitud enviada",
-      "La solicitud quedó pendiente de aceptación.",
-      "success"
-    );
-
-    setSending(false);
   }
+
+  // =========================
+  // RESPONDER SOLICITUD
+  // =========================
 
   async function responderSolicitud(
     loanId: string,
     aceptar: boolean
   ) {
-    setResponseLoading(loanId);
+    try {
+      setResponseLoading(loanId);
 
-    const { error } = await supabase.rpc(
-      "responder_solicitud_prestamo",
-      {
-        p_loan_id: loanId,
-        p_aceptar: aceptar,
-      }
-    );
+      await responderSolicitudService(loanId, aceptar);
 
-    if (error) {
-      console.error(error);
+      await loadData();
+
       mostrarModal(
-        aceptar ? "No se pudo aceptar" : "No se pudo rechazar",
-        error.message,
+        aceptar ? "Préstamo aceptado" : "Solicitud rechazada",
+        aceptar
+          ? "El préstamo ya está activo."
+          : "La solicitud fue rechazada.",
+        aceptar ? "success" : "info"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo responder",
+        error?.message || "Ocurrió un error.",
         "error"
       );
+    } finally {
       setResponseLoading(null);
-      return;
     }
-
-    await loadData();
-
-    mostrarModal(
-      aceptar ? "Préstamo aceptado" : "Solicitud rechazada",
-      aceptar
-        ? "El préstamo quedó activo."
-        : "La solicitud fue rechazada.",
-      "success"
-    );
-
-    setResponseLoading(null);
   }
 
-  function obtenerNombre(userId: string) {
-    if (userId === currentUserId) {
-      return "Tú";
-    }
-
-    const user = users.find((item) => item.id === userId);
-
-    return user?.full_name || user?.email || "Usuario";
-  }
-
-  function obtenerPago(loanId: string) {
-    return payments.find((payment) => payment.loan_id === loanId);
-  }
-
-  async function verComprobante(evidencePath: string) {
-    const { data, error } = await supabase.storage
-      .from("payment-evidence")
-      .createSignedUrl(evidencePath, 60 * 10);
-
-    if (error || !data?.signedUrl) {
-      console.error(error);
-      mostrarModal(
-        "No se pudo abrir el comprobante",
-        error?.message || "No fue posible generar el enlace.",
-        "error"
-      );
-      return;
-    }
-
-    window.open(data.signedUrl, "_blank");
-  }
+  // ============================================================
+  // PAGOS
+  // ============================================================
 
   function abrirRegistroPago(loan: Loan) {
     setPaymentLoan(loan);
@@ -432,46 +566,13 @@ export default function Home() {
   }
 
   async function registrarPago() {
-    if (!currentUserId || !paymentLoan) return;
-
-    if (!paymentFile) {
-      mostrarModal(
-        "Falta el comprobante",
-        "Selecciona una imagen o PDF como comprobante.",
-        "error"
-      );
+    if (!paymentLoan || !currentUserId) {
       return;
     }
 
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ];
+    const numero = Number(paymentAmount);
 
-    if (!allowedTypes.includes(paymentFile.type)) {
-      mostrarModal(
-        "Archivo no válido",
-        "Puedes subir JPG, PNG, WEBP o PDF.",
-        "error"
-      );
-      return;
-    }
-
-    if (paymentFile.size > 5 * 1024 * 1024) {
-      mostrarModal(
-        "Archivo demasiado grande",
-        "El comprobante no puede superar los 5 MB.",
-        "error"
-      );
-      return;
-    }
-
-    if (
-      !paymentAmount ||
-      Number(paymentAmount) <= 0
-    ) {
+    if (!numero || numero <= 0) {
       mostrarModal(
         "Monto inválido",
         "Escribe un monto válido.",
@@ -480,128 +581,330 @@ export default function Home() {
       return;
     }
 
-    setPaymentSending(true);
-
-    const extension =
-      paymentFile.name.split(".").pop()?.toLowerCase() || "file";
-
-    const filePath = `${currentUserId}/${paymentLoan.id}/${crypto.randomUUID()}.${extension}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("payment-evidence")
-      .upload(filePath, paymentFile, {
-        contentType: paymentFile.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error(uploadError);
+    if (!paymentFile) {
       mostrarModal(
-        "No se pudo subir el comprobante",
-        uploadError.message,
+        "Falta comprobante",
+        "Debes seleccionar una imagen o archivo como comprobante.",
         "error"
       );
-      setPaymentSending(false);
       return;
     }
 
-    const { error: paymentError } = await supabase
-      .from("loan_payments")
-      .insert({
-        loan_id: paymentLoan.id,
-        paid_by: currentUserId,
-        amount: Number(paymentAmount),
-        evidence_url: filePath,
-        payer_confirmed: true,
-        receiver_confirmed: false,
+    try {
+      setPaymentSending(true);
+
+      await registrarPagoService({
+        loanId: paymentLoan.id,
+        userId: currentUserId,
+        amount: numero,
+        file: paymentFile,
       });
 
-    if (paymentError) {
-      console.error(paymentError);
+      cerrarRegistroPago();
 
-      await supabase.storage
-        .from("payment-evidence")
-        .remove([filePath]);
+      await loadData();
 
-      mostrarModal(
-        "No se pudo registrar el pago",
-        paymentError.message,
-        "error"
-      );
-
-      setPaymentSending(false);
-      return;
-    }
-
-    const { error: loanError } = await supabase
-      .from("loans")
-      .update({
-        status: "payment_pending",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", paymentLoan.id);
-
-    if (loanError) {
-      console.error(loanError);
       mostrarModal(
         "Pago registrado",
-        "El comprobante se subió, pero hubo un problema actualizando el préstamo.",
+        "El prestamista debe confirmar que recibió el pago.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo registrar",
+        error?.message || "Ocurrió un error registrando el pago.",
         "error"
       );
+    } finally {
       setPaymentSending(false);
-      await loadData();
-      cerrarRegistroPago();
+    }
+  }
+
+  // =========================
+  // VER COMPROBANTE
+  // =========================
+
+  async function verComprobante(path: string | null) {
+    if (!path) {
+      mostrarModal(
+        "Sin comprobante",
+        "Este pago no tiene comprobante.",
+        "info"
+      );
       return;
     }
 
-    await loadData();
-    cerrarRegistroPago();
+    try {
+      const url = await verComprobanteService(path);
 
-    mostrarModal(
-      "Pago registrado",
-      "El comprobante fue enviado. La otra persona debe confirmar la recepción.",
-      "success"
-    );
+      if (url) {
+        window.open(url, "_blank");
+      }
+    } catch (error: any) {
+      console.error(error);
 
-    setPaymentSending(false);
+      mostrarModal(
+        "No se pudo abrir",
+        error?.message || "No se pudo abrir el comprobante.",
+        "error"
+      );
+    }
   }
+
+  // =========================
+  // CONFIRMAR RECEPCIÓN
+  // =========================
 
   async function confirmarRecepcion(loanId: string) {
-    setResponseLoading(loanId);
+    try {
+      setResponseLoading(loanId);
 
-    const { error } = await supabase.rpc(
-      "confirmar_recepcion_pago",
-      {
-        p_loan_id: loanId,
-      }
-    );
+      await confirmarRecepcionService(loanId);
 
-    if (error) {
+      await loadData();
+
+      mostrarModal(
+        "Pago confirmado",
+        "El préstamo quedó completado.",
+        "success"
+      );
+    } catch (error: any) {
       console.error(error);
+
       mostrarModal(
         "No se pudo confirmar",
-        error.message,
+        error?.message || "Ocurrió un error confirmando el pago.",
         "error"
       );
+    } finally {
       setResponseLoading(null);
+    }
+  }
+
+  // ============================================================
+  // GASTOS COMPARTIDOS
+  // ============================================================
+
+  function toggleSharedExpenseUser(userId: string) {
+    setSharedExpenseUsers((current) => {
+      if (current.includes(userId)) {
+        const next = current.filter((id) => id !== userId);
+
+        setSharedCustomAmounts((amounts) => {
+          const copy = { ...amounts };
+          delete copy[userId];
+          return copy;
+        });
+
+        return next;
+      }
+
+      if (current.length >= 3) {
+        mostrarModal(
+          "Máximo de personas",
+          "Puedes seleccionar hasta 3 personas además de ti.",
+          "info"
+        );
+
+        return current;
+      }
+
+      return [...current, userId];
+    });
+  }
+
+  function obtenerCantidadCompartida(userId: string) {
+    const total = Number(sharedExpenseTotal || 0);
+
+    if (sharedExpenseMode === "custom") {
+      return Number(sharedCustomAmounts[userId] || 0);
+    }
+
+    const cantidadPersonas = sharedExpenseUsers.length + 1;
+
+    if (!total || cantidadPersonas <= 0) {
+      return 0;
+    }
+
+    return Math.round((total / cantidadPersonas) * 100) / 100;
+  }
+
+  function obtenerCantidadDelCreador() {
+    const total = Number(sharedExpenseTotal || 0);
+
+    if (sharedExpenseMode === "equal") {
+      const cantidadPersonas = sharedExpenseUsers.length + 1;
+
+      if (!total || cantidadPersonas <= 0) {
+        return 0;
+      }
+
+      return Math.round((total / cantidadPersonas) * 100) / 100;
+    }
+
+    const sumaOtros = sharedExpenseUsers.reduce(
+      (sum, userId) =>
+        sum + Number(sharedCustomAmounts[userId] || 0),
+      0
+    );
+
+    return Math.round((total - sumaOtros) * 100) / 100;
+  }
+
+  async function crearGastoCompartido() {
+    const total = Number(sharedExpenseTotal);
+
+    if (!sharedExpenseTitle.trim()) {
+      mostrarModal(
+        "Falta el nombre",
+        "Escribe qué gasto estás compartiendo.",
+        "error"
+      );
       return;
     }
 
-    await loadData();
+    if (!total || total <= 0) {
+      mostrarModal(
+        "Monto inválido",
+        "El total debe ser mayor a cero.",
+        "error"
+      );
+      return;
+    }
 
-    mostrarModal(
-      "Pago confirmado",
-      "La recepción del pago fue confirmada y el préstamo quedó completado.",
-      "success"
-    );
+    if (sharedExpenseUsers.length === 0) {
+      mostrarModal(
+        "Faltan participantes",
+        "Selecciona al menos una persona.",
+        "error"
+      );
+      return;
+    }
 
-    setResponseLoading(null);
+    if (sharedExpenseMode === "custom") {
+      const sumaOtros = sharedExpenseUsers.reduce(
+        (sum, userId) =>
+          sum + Number(sharedCustomAmounts[userId] || 0),
+        0
+      );
+
+      if (sumaOtros > total) {
+        mostrarModal(
+          "Montos inválidos",
+          "La suma de las cantidades de los participantes no puede superar el total.",
+          "error"
+        );
+        return;
+      }
+
+      const cantidadesInvalidas = sharedExpenseUsers.some(
+        (userId) => Number(sharedCustomAmounts[userId] || 0) <= 0
+      );
+
+      if (cantidadesInvalidas) {
+        mostrarModal(
+          "Faltan cantidades",
+          "Escribe cuánto debe pagar cada participante.",
+          "error"
+        );
+        return;
+      }
+    }
+
+    try {
+      setSharedExpenseLoading(true);
+
+      const participants = sharedExpenseUsers.map((userId) => ({
+        user_id: userId,
+        amount: obtenerCantidadCompartida(userId),
+      }));
+
+      await crearGastoCompartidoService({
+        title: sharedExpenseTitle.trim(),
+        description:
+          sharedExpenseDescription.trim() || null,
+        totalAmount: total,
+        participants,
+      });
+
+      setSharedExpenseTitle("");
+      setSharedExpenseDescription("");
+      setSharedExpenseTotal("");
+      setSharedExpenseUsers([]);
+      setSharedExpenseMode("equal");
+      setSharedCustomAmounts({});
+      setShowSharedExpenseForm(false);
+
+      await loadData();
+
+      mostrarModal(
+        "Gasto creado",
+        "Las personas seleccionadas recibieron la solicitud.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo crear",
+        error?.message || "Ocurrió un error creando el gasto.",
+        "error"
+      );
+    } finally {
+      setSharedExpenseLoading(false);
+    }
   }
+
+  // =========================
+  // RESPONDER GASTO
+  // =========================
+
+  async function responderGastoCompartido(
+    expenseId: string,
+    aceptar: boolean
+  ) {
+    try {
+      setResponseLoading(expenseId);
+
+      await responderGastoCompartidoService(
+        expenseId,
+        aceptar
+      );
+
+      await loadData();
+
+      mostrarModal(
+        aceptar ? "Gasto aceptado" : "Gasto rechazado",
+        aceptar
+          ? "Aceptaste tu parte del gasto."
+          : "Rechazaste participar en el gasto.",
+        aceptar ? "success" : "info"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      mostrarModal(
+        "No se pudo responder",
+        error?.message || "Ocurrió un error.",
+        "error"
+      );
+    } finally {
+      setResponseLoading(null);
+    }
+  }
+
+  // ============================================================
+  // DATOS DERIVADOS
+  // ============================================================
 
   const misPrestamos = loans.filter(
     (loan) =>
-      loan.status === "active" ||
-      loan.status === "payment_pending"
+      (loan.status === "active" ||
+        loan.status === "payment_pending") &&
+      (loan.lender_id === currentUserId ||
+        loan.borrower_id === currentUserId)
   );
 
   const solicitudesPendientes = loans.filter(
@@ -616,21 +919,53 @@ export default function Home() {
       loan.lender_id === currentUserId
   );
 
-  const historial = loans.filter(
+  const historialPrestamos = loans.filter(
     (loan) =>
       loan.status === "completed" ||
       loan.status === "rejected" ||
       loan.status === "cancelled"
   );
 
+  const gastosPendientes = sharedExpenses.filter((expense) => {
+    if (!currentUserId) return false;
+
+    return sharedParticipants.some(
+      (participant) =>
+        participant.expense_id === expense.id &&
+        participant.user_id === currentUserId &&
+        participant.accepted === false
+    );
+  });
+
+  const misGastosCompartidos = sharedExpenses.filter((expense) => {
+    if (!currentUserId) return false;
+
+    return (
+      expense.created_by === currentUserId ||
+      sharedParticipants.some(
+        (participant) =>
+          participant.expense_id === expense.id &&
+          participant.user_id === currentUserId
+      )
+    );
+  });
+
+  const historialGastos = sharedExpenses.filter(
+    (expense) =>
+      expense.status === "completed" ||
+      expense.status === "cancelled"
+  );
+
+  // ============================================================
+  // ESTADO DE CARGA
+  // ============================================================
+
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
         <div className="text-center">
-          <div className="text-2xl font-bold text-slate-900">
-            Préstamos
-          </div>
-          <p className="mt-2 text-sm text-slate-500">
+          <div className="text-3xl mb-3">💸</div>
+          <p className="text-slate-600">
             Cargando...
           </p>
         </div>
@@ -638,393 +973,196 @@ export default function Home() {
     );
   }
 
+  // ============================================================
+  // LOGIN
+  // ============================================================
+
   if (!currentUserId) {
     return (
-      <main className="min-h-screen bg-slate-100 flex items-center justify-center p-5">
-        <div className="w-full max-w-md rounded-3xl bg-white p-7 shadow-xl">
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-7">
           <div className="text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-950 text-2xl text-white">
-              $
-            </div>
+            <div className="text-5xl mb-4">💸</div>
 
-            <h1 className="mt-5 text-3xl font-bold text-slate-950">
+            <h1 className="text-2xl font-bold text-slate-900">
               Préstamos
             </h1>
 
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              Gestiona préstamos entre las personas de confianza de
-              forma sencilla.
+            <p className="text-slate-500 mt-2">
+              Administra préstamos y gastos compartidos
+              entre tu grupo.
             </p>
           </div>
 
           <button
             onClick={loginWithGoogle}
             disabled={loginLoading}
-            className="mt-7 w-full rounded-2xl bg-slate-950 px-5 py-4 font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+            className="w-full mt-7 rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
           >
             {loginLoading
               ? "Conectando..."
               : "Continuar con Google"}
           </button>
-
-          <p className="mt-4 text-center text-xs text-slate-400">
-            Solo las cuentas autorizadas podrán utilizar la aplicación.
-          </p>
         </div>
       </main>
     );
   }
 
+  // ============================================================
+  // APP
+  // ============================================================
+
   return (
-    <main className="min-h-screen bg-slate-100 pb-24">
-      {installPrompt && (
-        <button
-          onClick={instalarAplicacion}
-          className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm"
-        >
-          📱 Instalar aplicación
-        </button>
-      )}
-      <div className="mx-auto w-full max-w-2xl px-4 py-5">
-        {/* ENCABEZADO */}
-        <header className="mb-6 flex items-center justify-between">
+    <main className="min-h-screen bg-slate-50 pb-24">
+      {/* HEADER */}
+
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
+        <div className="max-w-xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">
-              Cuenta
+            <p className="text-xs text-slate-500">
+              Conectado como
             </p>
-            <h1 className="text-xl font-bold text-slate-950">
-              Préstamos
-            </h1>
-            <p className="mt-1 max-w-[240px] truncate text-xs text-slate-500">
+
+            <p className="font-semibold text-slate-900 truncate max-w-[220px]">
               {email}
             </p>
           </div>
 
           <button
             onClick={cerrarSesion}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+            className="text-sm text-red-600 font-semibold"
           >
             Salir
           </button>
-        </header>
+        </div>
+      </header>
 
-        {/* ==================== INICIO ==================== */}
-        {activeTab === "inicio" && (
-          <div className="space-y-7">
-            {/* NUEVO PRÉSTAMO */}
-            <section className="rounded-3xl bg-white p-5 shadow-sm">
-              <div>
-                <h2 className="text-lg font-bold text-slate-950">
+      <div className="max-w-xl mx-auto px-4 pt-5">
+        {/* INSTALAR */}
+
+        {installPrompt && (
+          <button
+            onClick={instalarAplicacion}
+            className="w-full mb-5 rounded-2xl bg-indigo-600 text-white py-3 font-semibold"
+          >
+            📱 Instalar aplicación
+          </button>
+        )}
+
+        {/* =====================================================
+            PESTAÑA PRÉSTAMOS
+        ===================================================== */}
+
+        {activeTab === "prestamos" && (
+          <div className="space-y-5">
+            {/* SOLICITAR PRÉSTAMO */}
+
+            <section className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
+              <div className="mb-5">
+                <h2 className="text-xl font-bold text-slate-900">
                   Solicitar préstamo
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  La otra persona tendrá que aceptar antes de que
-                  el préstamo quede activo.
+                <p className="text-sm text-slate-700 mt-1">
+                  La otra persona deberá aceptar.
                 </p>
               </div>
 
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                    Solicitar a
-                  </label>
+              <div className="space-y-3">
+                <select
+                  value={selectedUser}
+                  onChange={(event) =>
+                    setSelectedUser(event.target.value)
+                  }
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white text-slate-900"
+                >
+                  <option value="">
+                    Selecciona una persona
+                  </option>
 
-                  <select
-                    value={selectedUser}
-                    onChange={(e) =>
-                      setSelectedUser(e.target.value)
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-500"
-                  >
-                    <option value="">
-                      Selecciona una persona
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.full_name || user.email}
                     </option>
+                  ))}
+                </select>
 
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.full_name || user.email}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="Monto"
+                  value={amount}
+                  onChange={(event) =>
+                    setAmount(event.target.value)
+                  }
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                />
 
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                    Monto
-                  </label>
+                <input
+                  type="text"
+                  placeholder="Concepto (opcional)"
+                  value={description}
+                  onChange={(event) =>
+                    setDescription(event.target.value)
+                  }
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                />
 
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                    Fecha límite
-                  </label>
-
-                  <input
-                    type="date"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                    Descripción
-                  </label>
-
-                  <textarea
-                    value={description}
-                    onChange={(e) =>
-                      setDescription(e.target.value)
-                    }
-                    placeholder="¿Para qué es el préstamo?"
-                    rows={3}
-                    className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-500"
-                  />
-                </div>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) =>
+                    setDueDate(event.target.value)
+                  }
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900"
+                />
 
                 <button
                   onClick={solicitarPrestamo}
                   disabled={sending}
-                  className="w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
+                  className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
                 >
                   {sending
                     ? "Enviando..."
-                    : "Solicitar préstamo"}
+                    : "Enviar solicitud"}
                 </button>
               </div>
             </section>
 
-            {/* MIS PRÉSTAMOS */}
-            <section>
-              <div className="mb-4">
-                <h2 className="text-xl font-bold text-slate-950">
-                  Mis préstamos
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  Préstamos que están actualmente activos.
-                </p>
-              </div>
-
-              {misPrestamos.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-                  No tienes préstamos activos.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {misPrestamos.map((loan) => {
-                    const soyPrestamista =
-                      loan.lender_id === currentUserId;
-
-                    const otraPersona = soyPrestamista
-                      ? loan.borrower_id
-                      : loan.lender_id;
-
-                    const payment = obtenerPago(loan.id);
-
-                    return (
-                      <div
-                        key={loan.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                              {soyPrestamista
-                                ? "Tú prestaste"
-                                : "Tú recibiste"}
-                            </p>
-
-                            <h3 className="mt-1 font-bold text-slate-950">
-                              {soyPrestamista
-                                ? `A ${obtenerNombre(
-                                  otraPersona
-                                )}`
-                                : `De ${obtenerNombre(
-                                  otraPersona
-                                )}`}
-                            </h3>
-                          </div>
-
-                          <p className="text-xl font-bold text-slate-950">
-                            ${Number(loan.amount).toFixed(2)}
-                          </p>
-                        </div>
-
-                        <div className="mt-4 rounded-xl bg-slate-50 p-4">
-                          <p className="text-sm font-semibold text-slate-800">
-                            {soyPrestamista
-                              ? `${obtenerNombre(
-                                otraPersona
-                              )} te debe`
-                              : `Le debes a ${obtenerNombre(
-                                otraPersona
-                              )}`}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            Fecha límite:{" "}
-                            {new Date(
-                              loan.due_date
-                            ).toLocaleDateString("es-MX")}
-                          </p>
-                        </div>
-
-                        {loan.description && (
-                          <p className="mt-4 text-sm text-slate-600">
-                            {loan.description}
-                          </p>
-                        )}
-
-                        {loan.status === "active" &&
-                          !soyPrestamista && (
-                            <button
-                              onClick={() =>
-                                abrirRegistroPago(loan)
-                              }
-                              className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white"
-                            >
-                              Registrar pago
-                            </button>
-                          )}
-
-                        {loan.status === "payment_pending" &&
-                          soyPrestamista && (
-                            <div className="mt-5">
-                              <div className="rounded-xl bg-amber-50 p-4">
-                                <p className="text-sm font-semibold text-amber-800">
-                                  Pago pendiente de confirmación
-                                </p>
-
-                                <p className="mt-1 text-xs text-amber-700">
-                                  {payment
-                                    ? `${obtenerNombre(
-                                      payment.paid_by
-                                    )} registró un pago de $${Number(
-                                      payment.amount
-                                    ).toFixed(2)}.`
-                                    : "Hay un pago pendiente."}
-                                </p>
-                              </div>
-
-                              <button
-                                onClick={() =>
-                                  confirmarRecepcion(
-                                    loan.id
-                                  )
-                                }
-                                disabled={
-                                  responseLoading === loan.id
-                                }
-                                className="mt-4 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
-                              >
-                                {responseLoading === loan.id
-                                  ? "Confirmando..."
-                                  : "Confirmar recepción"}
-                              </button>
-                            </div>
-                          )}
-
-                        {loan.status === "payment_pending" &&
-                          !soyPrestamista && (
-                            <div className="mt-5 rounded-xl bg-amber-50 p-4">
-                              <p className="text-sm font-semibold text-amber-800">
-                                Pago enviado
-                              </p>
-
-                              <p className="mt-1 text-xs text-amber-700">
-                                Esperando que el prestamista confirme
-                                la recepción.
-                              </p>
-                            </div>
-                          )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-
             {/* SOLICITUDES PENDIENTES */}
-            <section>
-              <div className="mb-4">
-                <h2 className="text-xl font-bold text-slate-950">
+
+            {solicitudesPendientes.length > 0 && (
+              <section>
+                <h2 className="text-lg font-bold text-slate-900 mb-3">
                   Solicitudes pendientes
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Personas que te están solicitando dinero.
-                </p>
-              </div>
-
-              {solicitudesPendientes.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-                  No tienes solicitudes pendientes.
-                </div>
-              ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {solicitudesPendientes.map((loan) => (
                     <div
                       key={loan.id}
-                      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                      className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
                     >
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex justify-between gap-4">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Solicitud de
+                          <p className="font-semibold text-slate-900">
+                            {obtenerNombre(
+                              loan.borrower_id
+                            )}
                           </p>
 
-                          <h3 className="mt-1 font-bold text-slate-950">
-                            {obtenerNombre(loan.borrower_id)}
-                          </h3>
+                          <p className="text-sm text-slate-700 mt-1">
+                            {loan.description ||
+                              "Préstamo"}
+                          </p>
                         </div>
 
-                        <p className="text-xl font-bold text-slate-950">
-                          ${Number(loan.amount).toFixed(2)}
+                        <p className="font-bold text-lg text-slate-900">
+                          {formatearMonto(loan.amount)}
                         </p>
                       </div>
 
-                      {loan.description && (
-                        <p className="mt-4 text-sm text-slate-600">
-                          {loan.description}
-                        </p>
-                      )}
-
-                      <p className="mt-3 text-xs text-slate-400">
-                        Fecha límite:{" "}
-                        {new Date(
-                          loan.due_date
-                        ).toLocaleDateString("es-MX")}
-                      </p>
-
-                      <div className="mt-5 grid grid-cols-2 gap-3">
-                        <button
-                          onClick={() =>
-                            responderSolicitud(
-                              loan.id,
-                              false
-                            )
-                          }
-                          disabled={
-                            responseLoading === loan.id
-                          }
-                          className="rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-700 disabled:opacity-50"
-                        >
-                          Rechazar
-                        </button>
-
+                      <div className="grid grid-cols-2 gap-2 mt-4">
                         <button
                           onClick={() =>
                             responderSolicitud(
@@ -1035,64 +1173,207 @@ export default function Home() {
                           disabled={
                             responseLoading === loan.id
                           }
-                          className="rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
+                          className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                         >
-                          {responseLoading === loan.id
-                            ? "Procesando..."
-                            : "Aceptar"}
+                          Aceptar
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            responderSolicitud(
+                              loan.id,
+                              false
+                            )
+                          }
+                          disabled={
+                            responseLoading === loan.id
+                          }
+                          className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                        >
+                          Rechazar
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </section>
+              </section>
+            )}
 
-            {/* PAGOS PENDIENTES */}
+            {/* MIS PRÉSTAMOS */}
+
             <section>
-              <div className="mb-4">
-                <h2 className="text-xl font-bold text-slate-950">
-                  Pagos pendientes
-                </h2>
+              <h2 className="text-lg font-bold text-slate-900 mb-3">
+                Préstamos activos
+              </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Pagos que necesitan tu confirmación.
-                </p>
-              </div>
-
-              {pagosPendientes.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-                  No tienes pagos pendientes.
+              {misPrestamos.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
+                  <p className="text-slate-700">
+                    No tienes préstamos activos.
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {pagosPendientes.map((loan) => {
-                    const payment = obtenerPago(loan.id);
+                <div className="space-y-3">
+                  {misPrestamos.map((loan) => {
+                    const soyPrestamista =
+                      loan.lender_id === currentUserId;
+
+                    const soyDeudor =
+                      loan.borrower_id === currentUserId;
+
+                    const payment = payments.find(
+                      (item) => item.loan_id === loan.id
+                    );
 
                     return (
                       <div
                         key={loan.id}
-                        className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm"
+                        className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
                       >
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">
-                          Pago por confirmar
-                        </p>
+                        <div className="flex justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {soyPrestamista
+                                ? `Le prestaste a ${obtenerNombre(
+                                  loan.borrower_id
+                                )}`
+                                : `Te prestó ${obtenerNombre(
+                                  loan.lender_id
+                                )}`}
+                            </p>
 
-                        <h3 className="mt-1 font-bold text-slate-950">
+                            <p className="text-sm text-slate-700 mt-1">
+                              {loan.description ||
+                                "Préstamo"}
+                            </p>
+                          </div>
+
+                          <p className="font-bold text-lg whitespace-nowrap text-slate-900">
+                            {formatearMonto(loan.amount)}
+                          </p>
+                        </div>
+
+                        <div className="mt-4 text-sm text-slate-700">
+                          Fecha límite:{" "}
+                          {formatearFecha(loan.due_date)}
+                        </div>
+
+                        <div className="mt-4">
+                          {loan.status === "active" &&
+                            soyDeudor && (
+                              <button
+                                onClick={() =>
+                                  abrirRegistroPago(loan)
+                                }
+                                className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                              >
+                                Registrar pago
+                              </button>
+                            )}
+
+                          {loan.status ===
+                            "payment_pending" &&
+                            soyPrestamista && (
+                              <div className="space-y-2">
+                                <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                                  El deudor registró un
+                                  pago. Revisa el
+                                  comprobante y confirma
+                                  si lo recibiste.
+                                </div>
+
+                                {payment?.evidence_url && (
+                                  <button
+                                    onClick={() =>
+                                      verComprobante(
+                                        payment.evidence_url
+                                      )
+                                    }
+                                    className="w-full rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                                  >
+                                    Ver comprobante
+                                  </button>
+                                )}
+
+                                <button
+                                  onClick={() =>
+                                    confirmarRecepcion(
+                                      loan.id
+                                    )
+                                  }
+                                  disabled={
+                                    responseLoading ===
+                                    loan.id
+                                  }
+                                  className="w-full rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                                >
+                                  {responseLoading ===
+                                    loan.id
+                                    ? "Confirmando..."
+                                    : "Confirmar recepción"}
+                                </button>
+                              </div>
+                            )}
+
+                          {loan.status === "payment_pending" &&
+                            soyDeudor && (
+                              <div className="rounded-2xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                                Pago enviado. Esperando
+                                confirmación del
+                                prestamista.
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* PAGOS PENDIENTES */}
+
+            {pagosPendientes.length > 0 && (
+              <section>
+                <h2 className="text-lg font-bold text-slate-900 mb-3">
+                  Pagos por confirmar
+                </h2>
+
+                <div className="space-y-3">
+                  {pagosPendientes.map((loan) => {
+                    const payment = payments.find(
+                      (item) => item.loan_id === loan.id
+                    );
+
+                    return (
+                      <div
+                        key={loan.id}
+                        className="bg-white rounded-3xl border border-amber-200 p-5"
+                      >
+                        <p className="font-semibold text-slate-900">
                           {obtenerNombre(loan.borrower_id)}
-                        </h3>
-
-                        <p className="mt-3 text-2xl font-bold text-slate-950">
-                          $
-                          {Number(
-                            payment?.amount ?? loan.amount
-                          ).toFixed(2)}
                         </p>
 
-                        <p className="mt-2 text-sm text-slate-500">
-                          Revisa el comprobante y confirma que
-                          recibiste el pago.
+                        <p className="text-sm text-slate-700 mt-1">
+                          Pagó{" "}
+                          {formatearMonto(
+                            payment?.amount ||
+                            loan.amount
+                          )}
                         </p>
+
+                        {payment?.evidence_url && (
+                          <button
+                            onClick={() =>
+                              verComprobante(
+                                payment.evidence_url
+                              )
+                            }
+                            className="w-full mt-3 rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                          >
+                            Ver comprobante
+                          </button>
+                        )}
 
                         <button
                           onClick={() =>
@@ -1101,7 +1382,7 @@ export default function Home() {
                           disabled={
                             responseLoading === loan.id
                           }
-                          className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
+                          className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                         >
                           {responseLoading === loan.id
                             ? "Confirmando..."
@@ -1111,219 +1392,622 @@ export default function Home() {
                     );
                   })}
                 </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* =====================================================
+            PESTAÑA GASTOS
+        ===================================================== */}
+
+        {activeTab === "gastos" && (
+          <div className="space-y-5">
+            {/* CREAR GASTO */}
+
+            <section className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">
+                    Gastos compartidos
+                  </h2>
+
+                  <p className="text-sm text-slate-700 mt-1">
+                    Divide una comida, salida o compra
+                    entre varias personas.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() =>
+                    setShowSharedExpenseForm(
+                      (value) => !value
+                    )
+                  }
+                  className="rounded-2xl bg-slate-900 text-white px-4 py-3 font-semibold"
+                >
+                  {showSharedExpenseForm
+                    ? "Cerrar"
+                    : "Nuevo"}
+                </button>
+              </div>
+
+              {showSharedExpenseForm && (
+                <div className="mt-5 space-y-4">
+                  <input
+                    type="text"
+                    placeholder="¿Qué pagaste?"
+                    value={sharedExpenseTitle}
+                    onChange={(event) =>
+                      setSharedExpenseTitle(
+                        event.target.value
+                      )
+                    }
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                  />
+
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="Total"
+                    value={sharedExpenseTotal}
+                    onChange={(event) =>
+                      setSharedExpenseTotal(
+                        event.target.value
+                      )
+                    }
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                  />
+
+                  <textarea
+                    placeholder="Descripción (opcional)"
+                    value={sharedExpenseDescription}
+                    onChange={(event) =>
+                      setSharedExpenseDescription(
+                        event.target.value
+                      )
+                    }
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500 min-h-24"
+                  />
+
+                  <div>
+                    <p className="font-semibold text-slate-900 mb-2">
+                      Participantes
+                    </p>
+
+                    <div className="space-y-2">
+                      {users.map((user) => {
+                        const selected =
+                          sharedExpenseUsers.includes(
+                            user.id
+                          );
+
+                        return (
+                          <button
+                            key={user.id}
+                            onClick={() =>
+                              toggleSharedExpenseUser(
+                                user.id
+                              )
+                            }
+                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
+                              ? "border-slate-900 bg-slate-100"
+                              : "border-slate-200 bg-white"
+                              }`}
+                          >
+                            <span className="text-slate-900">
+                              {user.full_name ||
+                                user.email}
+                            </span>
+
+                            <span className="text-slate-900">
+                              {selected ? "✓" : "○"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {sharedExpenseUsers.length > 0 && (
+                    <>
+                      <div>
+                        <p className="font-semibold text-slate-900 mb-2">
+                          ¿Cómo dividir?
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() =>
+                              setSharedExpenseMode(
+                                "equal"
+                              )
+                            }
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode ===
+                              "equal"
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
+                              }`}
+                          >
+                            Partes iguales
+                          </button>
+
+                          <button
+                            onClick={() =>
+                              setSharedExpenseMode(
+                                "custom"
+                              )
+                            }
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode ===
+                              "custom"
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700"
+                              }`}
+                          >
+                            Cantidades
+                          </button>
+                        </div>
+                      </div>
+
+                      {sharedExpenseMode ===
+                        "custom" && (
+                          <div className="space-y-2">
+                            {sharedExpenseUsers.map(
+                              (userId) => (
+                                <div
+                                  key={userId}
+                                  className="flex items-center gap-2"
+                                >
+                                  <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
+                                    {obtenerNombre(
+                                      userId
+                                    )}
+                                  </div>
+
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    placeholder="$"
+                                    value={
+                                      sharedCustomAmounts[
+                                      userId
+                                      ] || ""
+                                    }
+                                    onChange={(event) =>
+                                      setSharedCustomAmounts(
+                                        (current) => ({
+                                          ...current,
+                                          [userId]:
+                                            event.target
+                                              .value,
+                                        })
+                                      )
+                                    }
+                                    className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                                  />
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
+
+                      <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                        <p className="text-sm text-slate-700">
+                          Tu parte
+                        </p>
+
+                        <p className="text-xl font-bold text-slate-900">
+                          {formatearMonto(
+                            obtenerCantidadDelCreador()
+                          )}
+                        </p>
+
+                        {sharedExpenseMode ===
+                          "custom" && (
+                            <p className="text-xs text-slate-700 mt-1">
+                              El restante del total queda
+                              asignado a ti.
+                            </p>
+                          )}
+                      </div>
+
+                      <button
+                        onClick={crearGastoCompartido}
+                        disabled={
+                          sharedExpenseLoading
+                        }
+                        className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
+                      >
+                        {sharedExpenseLoading
+                          ? "Creando..."
+                          : "Crear gasto compartido"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+
+            {/* SOLICITUDES DE GASTOS */}
+
+            {gastosPendientes.length > 0 && (
+              <section>
+                <h2 className="text-lg font-bold text-slate-900 mb-3">
+                  Solicitudes de gastos
+                </h2>
+
+                <div className="space-y-3">
+                  {gastosPendientes.map((expense) => {
+                    const participant =
+                      sharedParticipants.find(
+                        (item) =>
+                          item.expense_id ===
+                          expense.id &&
+                          item.user_id ===
+                          currentUserId
+                      );
+
+                    return (
+                      <div
+                        key={expense.id}
+                        className="bg-white rounded-3xl border border-amber-200 p-5"
+                      >
+                        <div className="flex justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {expense.title}
+                            </p>
+
+                            <p className="text-sm text-slate-700 mt-1">
+                              Pagado por{" "}
+                              {obtenerNombre(
+                                expense.created_by
+                              )}
+                            </p>
+                          </div>
+
+                          <p className="font-bold text-slate-900">
+                            {formatearMonto(
+                              participant?.amount || 0
+                            )}
+                          </p>
+                        </div>
+
+                        {expense.description && (
+                          <p className="text-sm text-slate-700 mt-3">
+                            {expense.description}
+                          </p>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2 mt-4">
+                          <button
+                            onClick={() =>
+                              responderGastoCompartido(
+                                expense.id,
+                                true
+                              )
+                            }
+                            disabled={
+                              responseLoading ===
+                              expense.id
+                            }
+                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                          >
+                            Aceptar
+                          </button>
+
+                          <button
+                            onClick={() =>
+                              responderGastoCompartido(
+                                expense.id,
+                                false
+                              )
+                            }
+                            disabled={
+                              responseLoading ===
+                              expense.id
+                            }
+                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                          >
+                            Rechazar
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* MIS GASTOS */}
+
+            <section>
+              <h2 className="text-lg font-bold text-slate-900 mb-3">
+                Mis gastos compartidos
+              </h2>
+
+              {misGastosCompartidos.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
+                  <p className="text-slate-700">
+                    Todavía no tienes gastos compartidos.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {misGastosCompartidos.map(
+                    (expense) => {
+                      const participant =
+                        sharedParticipants.find(
+                          (item) =>
+                            item.expense_id ===
+                            expense.id &&
+                            item.user_id ===
+                            currentUserId
+                        );
+
+                      return (
+                        <div
+                          key={expense.id}
+                          className="bg-white rounded-3xl border border-slate-200 p-5"
+                        >
+                          <div className="flex justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {expense.title}
+                              </p>
+
+                              <p className="text-sm text-slate-700 mt-1">
+                                Total:{" "}
+                                {formatearMonto(
+                                  expense.total_amount
+                                )}
+                              </p>
+                            </div>
+
+                            {participant && (
+                              <p className="font-bold text-slate-900">
+                                {formatearMonto(
+                                  participant.amount
+                                )}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="mt-3 text-sm">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 ${participant?.accepted
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-amber-100 text-amber-700"
+                                }`}
+                            >
+                              {participant?.accepted
+                                ? "Aceptado"
+                                : "Pendiente"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
               )}
             </section>
           </div>
         )}
 
-        {/* ==================== HISTORIAL ==================== */}
+        {/* =====================================================
+            PESTAÑA HISTORIAL
+        ===================================================== */}
+
         {activeTab === "historial" && (
-          <section>
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-slate-950">
-                Historial
+          <div className="space-y-6">
+            {/* HISTORIAL PRÉSTAMOS */}
+
+            <section>
+              <h2 className="text-xl font-bold text-slate-900 mb-3">
+                Historial de préstamos
               </h2>
 
-              <p className="mt-1 text-sm text-slate-500">
-                Aquí aparecen los préstamos que ya terminaron.
-              </p>
-            </div>
-
-            {historial.length === 0 ? (
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-xl">
-                  ✓
+              {historialPrestamos.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
+                  <p className="text-slate-700">
+                    No hay préstamos en el historial.
+                  </p>
                 </div>
-
-                <h3 className="mt-4 font-semibold text-slate-900">
-                  Sin historial
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  Cuando completes o rechaces un préstamo aparecerá
-                  aquí.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {historial.map((loan) => {
-                  const soyPrestamista =
-                    loan.lender_id === currentUserId;
-
-                  const otraPersona = soyPrestamista
-                    ? loan.borrower_id
-                    : loan.lender_id;
-
-                  const payment = obtenerPago(loan.id);
-
-                  return (
+              ) : (
+                <div className="space-y-3">
+                  {historialPrestamos.map((loan) => (
                     <div
                       key={loan.id}
-                      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                      className="bg-white rounded-3xl border border-slate-200 p-5"
                     >
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex justify-between gap-4">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            {soyPrestamista
-                              ? "Tú prestaste"
-                              : "Tú recibiste"}
+                          <p className="font-semibold text-slate-900">
+                            {loan.lender_id ===
+                              currentUserId
+                              ? `Le prestaste a ${obtenerNombre(
+                                loan.borrower_id
+                              )}`
+                              : `Te prestó ${obtenerNombre(
+                                loan.lender_id
+                              )}`}
                           </p>
 
-                          <h3 className="mt-1 font-bold text-slate-950">
-                            {soyPrestamista
-                              ? `A ${obtenerNombre(
-                                otraPersona
-                              )}`
-                              : `De ${obtenerNombre(
-                                otraPersona
-                              )}`}
-                          </h3>
+                          <p className="text-sm text-slate-700 mt-1">
+                            {loan.description ||
+                              "Préstamo"}
+                          </p>
                         </div>
 
+                        <p className="font-bold text-slate-900">
+                          {formatearMonto(loan.amount)}
+                        </p>
+                      </div>
+
+                      <div className="mt-3">
                         <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${loan.status === "completed"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-slate-100 text-slate-600"
+                          className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status ===
+                            "completed"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : loan.status ===
+                              "rejected"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-slate-100 text-slate-700"
                             }`}
                         >
-                          {loan.status === "completed"
+                          {loan.status ===
+                            "completed"
                             ? "Completado"
-                            : loan.status === "rejected"
+                            : loan.status ===
+                              "rejected"
                               ? "Rechazado"
                               : "Cancelado"}
                         </span>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
-                      <div className="mt-4 flex items-end justify-between">
-                        <div>
-                          <p className="text-xs text-slate-400">
-                            Monto
-                          </p>
+            {/* HISTORIAL GASTOS */}
 
-                          <p className="text-2xl font-bold text-slate-950">
-                            ${Number(loan.amount).toFixed(2)}
-                          </p>
+            <section>
+              <h2 className="text-xl font-bold text-slate-900 mb-3">
+                Historial de gastos
+              </h2>
+
+              {historialGastos.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
+                  <p className="text-slate-700">
+                    No hay gastos terminados.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {historialGastos.map((expense) => {
+                    const participant =
+                      sharedParticipants.find(
+                        (item) =>
+                          item.expense_id ===
+                          expense.id &&
+                          item.user_id ===
+                          currentUserId
+                      );
+
+                    return (
+                      <div
+                        key={expense.id}
+                        className="bg-white rounded-3xl border border-slate-200 p-5"
+                      >
+                        <div className="flex justify-between gap-4">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {expense.title}
+                            </p>
+
+                            <p className="text-sm text-slate-700 mt-1">
+                              Total{" "}
+                              {formatearMonto(
+                                expense.total_amount
+                              )}
+                            </p>
+                          </div>
+
+                          {participant && (
+                            <p className="font-bold text-slate-900">
+                              {formatearMonto(
+                                participant.amount
+                              )}
+                            </p>
+                          )}
                         </div>
 
-                        <div className="text-right">
-                          <p className="text-xs text-slate-400">
-                            Fecha límite
-                          </p>
-
-                          <p className="text-sm font-medium text-slate-700">
-                            {new Date(
-                              loan.due_date
-                            ).toLocaleDateString("es-MX")}
-                          </p>
+                        <div className="mt-3">
+                          <span
+                            className={`inline-flex rounded-full px-3 py-1 text-sm ${expense.status ===
+                              "completed"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-red-100 text-red-700"
+                              }`}
+                          >
+                            {expense.status ===
+                              "completed"
+                              ? "Completado"
+                              : "Cancelado"}
+                          </span>
                         </div>
                       </div>
-
-                      {loan.description && (
-                        <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-                          {loan.description}
-                        </p>
-                      )}
-
-                      {payment && (
-                        <div className="mt-4 rounded-xl bg-slate-50 p-4">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Información del pago
-                          </p>
-
-                          <div className="mt-3 space-y-2">
-                            <div className="flex justify-between gap-4">
-                              <span className="text-sm text-slate-500">
-                                Monto pagado
-                              </span>
-
-                              <span className="text-sm font-semibold text-slate-900">
-                                ${Number(payment.amount).toFixed(2)}
-                              </span>
-                            </div>
-
-                            <div className="flex justify-between gap-4">
-                              <span className="text-sm text-slate-500">
-                                Fecha de pago
-                              </span>
-
-                              <span className="text-sm font-semibold text-slate-900">
-                                {new Date(payment.created_at).toLocaleDateString(
-                                  "es-MX",
-                                  {
-                                    day: "2-digit",
-                                    month: "2-digit",
-                                    year: "numeric",
-                                  }
-                                )}
-                              </span>
-                            </div>
-
-                            {payment.evidence_url && (
-                              <button
-                                onClick={() =>
-                                  verComprobante(payment.evidence_url!)
-                                }
-                                className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
-                              >
-                                📎 Ver comprobante
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <p className="mt-4 text-xs text-slate-400">
-                        Creado el{" "}
-                        {new Date(
-                          loan.created_at
-                        ).toLocaleDateString("es-MX")}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
         )}
       </div>
 
-      {/* NAVEGACIÓN INFERIOR */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto grid max-w-2xl grid-cols-2">
+      {/* =====================================================
+          NAVEGACIÓN INFERIOR
+      ===================================================== */}
+
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200">
+        <div className="max-w-xl mx-auto grid grid-cols-3">
           <button
-            onClick={() => setActiveTab("inicio")}
-            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${activeTab === "inicio"
-              ? "text-slate-950"
-              : "text-slate-400"
+            onClick={() =>
+              setActiveTab("prestamos")
+            }
+            className={`py-4 text-sm font-semibold ${activeTab === "prestamos"
+              ? "text-slate-900"
+              : "text-slate-500"
               }`}
           >
-            <span className="text-xl">⌂</span>
-            Inicio
+            <div className="text-xl">💸</div>
+            Préstamos
           </button>
 
           <button
-            onClick={() => setActiveTab("historial")}
-            className={`flex flex-col items-center gap-1 px-4 py-3 text-xs font-semibold ${activeTab === "historial"
-              ? "text-slate-950"
-              : "text-slate-400"
+            onClick={() =>
+              setActiveTab("gastos")
+            }
+            className={`py-4 text-sm font-semibold ${activeTab === "gastos"
+              ? "text-slate-900"
+              : "text-slate-500"
               }`}
           >
-            <span className="text-xl">↺</span>
+            <div className="text-xl">🍽️</div>
+            Gastos
+          </button>
+
+          <button
+            onClick={() =>
+              setActiveTab("historial")
+            }
+            className={`py-4 text-sm font-semibold ${activeTab === "historial"
+              ? "text-slate-900"
+              : "text-slate-500"
+              }`}
+          >
+            <div className="text-xl">📋</div>
             Historial
           </button>
         </div>
       </nav>
 
-      {/* MODAL GENERAL */}
+      {/* =====================================================
+          MODAL GENERAL
+      ===================================================== */}
+
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-5">
-          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
             <div
-              className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full text-xl ${modal.type === "success"
-                ? "bg-green-100 text-green-700"
+              className={`text-3xl mb-3 ${modal.type === "success"
+                ? "text-emerald-600"
                 : modal.type === "error"
-                  ? "bg-red-100 text-red-700"
-                  : "bg-slate-100 text-slate-700"
+                  ? "text-red-600"
+                  : "text-slate-700"
                 }`}
             >
               {modal.type === "success"
@@ -1333,17 +2017,17 @@ export default function Home() {
                   : "i"}
             </div>
 
-            <h2 className="mt-4 text-center text-xl font-bold text-slate-950">
+            <h3 className="text-xl font-bold text-slate-900">
               {modal.title}
-            </h2>
+            </h3>
 
-            <p className="mt-2 text-center text-sm leading-6 text-slate-500">
+            <p className="text-slate-700 mt-2">
               {modal.message}
             </p>
 
             <button
               onClick={cerrarModal}
-              className="mt-6 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white"
+              className="w-full mt-5 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
             >
               Entendido
             </button>
@@ -1351,95 +2035,68 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL REGISTRAR PAGO */}
+      {/* =====================================================
+          MODAL REGISTRAR PAGO
+      ===================================================== */}
+
       {paymentLoan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-5">
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-slate-950">
-                  Registrar pago
-                </h2>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-slate-900">
+              Registrar pago
+            </h3>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Deuda con{" "}
-                  {obtenerNombre(paymentLoan.lender_id)}
-                </p>
-              </div>
+            <p className="text-sm text-slate-700 mt-1">
+              {formatearMonto(paymentLoan.amount)}
+            </p>
 
-              <button
-                onClick={cerrarRegistroPago}
-                className="text-2xl text-slate-400"
-              >
-                ×
-              </button>
-            </div>
+            <div className="space-y-3 mt-5">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={paymentAmount}
+                onChange={(event) =>
+                  setPaymentAmount(event.target.value)
+                }
+                placeholder="Monto pagado"
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+              />
 
-            <div className="mt-5 rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs text-slate-500">
-                Monto del préstamo
-              </p>
-
-              <p className="mt-1 text-2xl font-bold text-slate-950">
-                ${Number(paymentLoan.amount).toFixed(2)}
-              </p>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-                  Monto pagado
-                </label>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={paymentAmount}
-                  onChange={(e) =>
-                    setPaymentAmount(e.target.value)
-                  }
-                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+              <label className="block">
+                <span className="block text-sm font-semibold text-slate-700 mb-2">
                   Comprobante
-                </label>
+                </span>
 
                 <input
                   type="file"
-                  accept=".jpg,.jpeg,.png,.webp,.pdf"
-                  onChange={(e) =>
+                  accept="image/*,.pdf"
+                  onChange={(event) =>
                     setPaymentFile(
-                      e.target.files?.[0] ?? null
+                      event.target.files?.[0] || null
                     )
                   }
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700"
+                  className="w-full text-sm text-slate-900"
                 />
+              </label>
+            </div>
 
-                <p className="mt-2 text-xs text-slate-400">
-                  JPG, PNG, WEBP o PDF. Máximo 5 MB.
-                </p>
-              </div>
+            <div className="grid grid-cols-2 gap-2 mt-6">
+              <button
+                onClick={cerrarRegistroPago}
+                disabled={paymentSending}
+                className="rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
+              >
+                Cancelar
+              </button>
 
               <button
                 onClick={registrarPago}
                 disabled={paymentSending}
-                className="w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
+                className="rounded-2xl bg-slate-900 text-white py-3 font-semibold disabled:opacity-50"
               >
                 {paymentSending
-                  ? "Enviando..."
-                  : "Enviar comprobante"}
-              </button>
-
-              <button
-                onClick={cerrarRegistroPago}
-                disabled={paymentSending}
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-700 disabled:opacity-50"
-              >
-                Cancelar
+                  ? "Guardando..."
+                  : "Registrar"}
               </button>
             </div>
           </div>
