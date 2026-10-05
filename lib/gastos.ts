@@ -26,6 +26,39 @@ export async function crearGastoCompartido(params: {
   return data;
 }
 
+export async function editarGastoCompartido(params: {
+  expenseId: string;
+  title: string;
+  description: string | null;
+  totalAmount: number;
+  participants: {
+    user_id: string;
+    amount: number;
+  }[];
+}) {
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("editar_gasto_compartido", {
+    p_expense_id: params.expenseId,
+    p_title: params.title,
+    p_description: params.description,
+    p_total_amount: params.totalAmount,
+    p_participants: params.participants,
+  });
+
+  if (error) throw error;
+}
+
+export async function eliminarGastoCompartido(expenseId: string) {
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("eliminar_gasto_compartido", {
+    p_expense_id: expenseId,
+  });
+
+  if (error) throw error;
+}
+
 export async function responderGastoCompartido(
   expenseId: string,
   aceptar: boolean
