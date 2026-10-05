@@ -31,6 +31,12 @@ type Payment = {
   receiver_confirmed: boolean;
 };
 
+type ModalData = {
+  title: string;
+  message: string;
+  type: "success" | "error" | "info";
+};
+
 export default function Home() {
   const [email, setEmail] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -52,6 +58,8 @@ export default function Home() {
   const [paymentSending, setPaymentSending] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [responseLoading, setResponseLoading] = useState<string | null>(null);
+
+  const [modal, setModal] = useState<ModalData | null>(null);
 
   useEffect(() => {
     loadData();
@@ -116,6 +124,22 @@ export default function Home() {
     setLoading(false);
   }
 
+  function mostrarModal(
+    title: string,
+    message: string,
+    type: "success" | "error" | "info"
+  ) {
+    setModal({
+      title,
+      message,
+      type,
+    });
+  }
+
+  function cerrarModal() {
+    setModal(null);
+  }
+
   async function loginWithGoogle() {
     setLoginLoading(true);
 
@@ -130,21 +154,35 @@ export default function Home() {
 
     if (error) {
       console.error(error);
-      alert(error.message);
+
+      mostrarModal(
+        "No se pudo iniciar sesión",
+        error.message,
+        "error"
+      );
+
       setLoginLoading(false);
     }
   }
 
   async function solicitarPrestamo() {
     if (!selectedUser || !amount) {
-      alert("Selecciona una persona e indica la cantidad.");
+      mostrarModal(
+        "Faltan datos",
+        "Selecciona una persona e indica la cantidad.",
+        "info"
+      );
       return;
     }
 
     const numericAmount = Number(amount);
 
     if (numericAmount <= 0) {
-      alert("La cantidad debe ser mayor que 0.");
+      mostrarModal(
+        "Cantidad inválida",
+        "La cantidad debe ser mayor que cero.",
+        "info"
+      );
       return;
     }
 
@@ -157,7 +195,12 @@ export default function Home() {
     } = await supabase.auth.getSession();
 
     if (!session) {
-      alert("Tu sesión ha expirado.");
+      mostrarModal(
+        "Sesión expirada",
+        "Vuelve a iniciar sesión para continuar.",
+        "error"
+      );
+
       setSending(false);
       return;
     }
@@ -176,7 +219,13 @@ export default function Home() {
 
     if (error) {
       console.error(error);
-      alert("No se pudo crear la solicitud: " + error.message);
+
+      mostrarModal(
+        "No se pudo crear",
+        error.message,
+        "error"
+      );
+
       setSending(false);
       return;
     }
@@ -192,20 +241,31 @@ export default function Home() {
 
     if (acceptanceError) {
       console.error(acceptanceError);
-      alert(
-        "El préstamo se creó, pero hubo un problema registrando la aceptación."
+
+      mostrarModal(
+        "Solicitud creada",
+        "La solicitud se creó, pero hubo un problema registrando tu aceptación.",
+        "error"
       );
+
       setSending(false);
       return;
     }
-
-    alert("¡Solicitud enviada!");
 
     setSelectedUser(null);
     setAmount("");
     setDescription("");
 
     await loadData();
+
+    mostrarModal(
+      "Solicitud enviada",
+      `Tu solicitud de $${numericAmount.toFixed(
+        2
+      )} fue enviada correctamente a ${selectedUser.full_name || selectedUser.email || "la otra persona"
+      }.`,
+      "success"
+    );
 
     setSending(false);
   }
@@ -228,36 +288,34 @@ export default function Home() {
 
     if (error) {
       console.error(error);
-      alert("No se pudo responder la solicitud: " + error.message);
+
+      mostrarModal(
+        "No se pudo responder",
+        error.message,
+        "error"
+      );
+
       setResponseLoading(null);
       return;
     }
 
-    alert(
-      aceptar
-        ? "¡Solicitud aceptada!"
-        : "Solicitud rechazada."
-    );
-
     await loadData();
+
+    mostrarModal(
+      aceptar ? "Solicitud aceptada" : "Solicitud rechazada",
+      aceptar
+        ? "La solicitud fue aceptada. El préstamo ya puede pasar a estado activo."
+        : "La solicitud fue rechazada.",
+      aceptar ? "success" : "info"
+    );
 
     setResponseLoading(null);
   }
 
-  function obtenerNombreContraparte(loan: Loan) {
-    if (loan.lender_id === currentUserId) {
-      const borrower = users.find(
-        (user) => user.id === loan.borrower_id
-      );
+  function obtenerNombre(userId: string) {
+    const user = users.find((item) => item.id === userId);
 
-      return borrower?.full_name || borrower?.email || "Usuario";
-    }
-
-    const lender = users.find(
-      (user) => user.id === loan.lender_id
-    );
-
-    return lender?.full_name || lender?.email || "Usuario";
+    return user?.full_name || user?.email || "Usuario";
   }
 
   function obtenerPago(loanId: string) {
@@ -280,14 +338,22 @@ export default function Home() {
 
   async function registrarPago() {
     if (!paymentLoan || !paymentFile || !currentUserId) {
-      alert("Selecciona el comprobante de pago.");
+      mostrarModal(
+        "Falta el comprobante",
+        "Selecciona el comprobante del pago antes de continuar.",
+        "info"
+      );
       return;
     }
 
     const numericAmount = Number(paymentAmount);
 
     if (numericAmount <= 0) {
-      alert("La cantidad debe ser mayor que 0.");
+      mostrarModal(
+        "Cantidad inválida",
+        "La cantidad pagada debe ser mayor que cero.",
+        "info"
+      );
       return;
     }
 
@@ -299,12 +365,20 @@ export default function Home() {
     ];
 
     if (!allowedTypes.includes(paymentFile.type)) {
-      alert("El comprobante debe ser JPG, PNG, WEBP o PDF.");
+      mostrarModal(
+        "Archivo no válido",
+        "El comprobante debe ser JPG, PNG, WEBP o PDF.",
+        "error"
+      );
       return;
     }
 
     if (paymentFile.size > 5 * 1024 * 1024) {
-      alert("El comprobante no puede superar 5 MB.");
+      mostrarModal(
+        "Archivo demasiado grande",
+        "El comprobante no puede superar los 5 MB.",
+        "error"
+      );
       return;
     }
 
@@ -323,10 +397,13 @@ export default function Home() {
 
     if (uploadError) {
       console.error(uploadError);
-      alert(
-        "No se pudo subir el comprobante: " +
-          uploadError.message
+
+      mostrarModal(
+        "No se pudo subir el comprobante",
+        uploadError.message,
+        "error"
       );
+
       setPaymentSending(false);
       return;
     }
@@ -344,10 +421,13 @@ export default function Home() {
 
     if (paymentError) {
       console.error(paymentError);
-      alert(
-        "El comprobante se subió, pero no se pudo registrar el pago: " +
-          paymentError.message
+
+      mostrarModal(
+        "No se pudo registrar el pago",
+        paymentError.message,
+        "error"
       );
+
       setPaymentSending(false);
       return;
     }
@@ -362,30 +442,38 @@ export default function Home() {
 
     if (loanError) {
       console.error(loanError);
-      alert(
-        "El pago se registró, pero no se pudo actualizar el préstamo."
+
+      mostrarModal(
+        "Pago registrado",
+        "El pago se registró, pero hubo un problema actualizando el estado del préstamo.",
+        "error"
       );
+
       setPaymentSending(false);
       return;
     }
 
-    alert(
-      "¡Pago registrado! La otra persona debe confirmar que recibió el pago."
-    );
-
     cerrarRegistroPago();
 
     await loadData();
+
+    mostrarModal(
+      "Pago registrado",
+      "El comprobante se guardó correctamente. Ahora la otra persona debe confirmar que recibió el pago.",
+      "success"
+    );
 
     setPaymentSending(false);
   }
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-gray-100 p-6">
+      <main className="min-h-screen bg-slate-100 p-5 text-slate-900">
         <div className="mx-auto max-w-md">
-          <div className="rounded-2xl bg-white p-6 shadow">
-            Cargando...
+          <div className="rounded-3xl bg-white p-6 shadow-sm">
+            <p className="font-medium text-slate-800">
+              Cargando...
+            </p>
           </div>
         </div>
       </main>
@@ -394,22 +482,22 @@ export default function Home() {
 
   if (!email) {
     return (
-      <main className="min-h-screen bg-gray-100 p-6">
+      <main className="min-h-screen bg-slate-100 p-5 text-slate-900">
         <div className="mx-auto flex min-h-[80vh] max-w-md items-center">
           <div className="w-full rounded-3xl bg-white p-7 shadow-lg">
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-slate-950">
               Préstamos
             </h1>
 
-            <p className="mt-3 text-gray-600">
-              Una aplicación privada para administrar préstamos
-              entre personas.
+            <p className="mt-3 leading-6 text-slate-600">
+              Administra tus préstamos de forma sencilla y
+              ordenada.
             </p>
 
             <button
               onClick={loginWithGoogle}
               disabled={loginLoading}
-              className="mt-8 w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
+              className="mt-8 w-full rounded-2xl bg-slate-950 px-5 py-4 font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
             >
               {loginLoading
                 ? "Conectando..."
@@ -436,34 +524,34 @@ export default function Home() {
   );
 
   return (
-    <main className="min-h-screen bg-gray-100 p-4 pb-10">
+    <main className="min-h-screen bg-slate-100 p-4 pb-10 text-slate-900">
       <div className="mx-auto max-w-md space-y-5">
 
         {/* ENCABEZADO */}
-        <section className="rounded-3xl bg-white p-6 shadow">
-          <p className="text-sm text-gray-500">
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <p className="text-sm font-medium text-slate-500">
             Sesión iniciada como
           </p>
 
-          <h1 className="mt-1 text-xl font-bold text-gray-900">
+          <h1 className="mt-1 break-all text-lg font-bold text-slate-950">
             {email}
           </h1>
 
-          <p className="mt-3 text-sm text-gray-600">
-            Administra tus préstamos de forma sencilla.
+          <p className="mt-3 text-sm leading-5 text-slate-600">
+            Aquí puedes consultar lo que debes y lo que te deben.
           </p>
         </section>
 
         {/* SOLICITUDES PENDIENTES */}
         {pendingRequests.length > 0 && (
-          <section className="rounded-3xl bg-white p-6 shadow">
-            <div className="mb-4">
-              <h2 className="text-xl font-bold text-gray-900">
+          <section className="rounded-3xl bg-white p-6 shadow-sm">
+            <div className="mb-5">
+              <h2 className="text-xl font-bold text-slate-950">
                 Solicitudes pendientes
               </h2>
 
-              <p className="mt-1 text-sm text-gray-500">
-                Estas personas te han solicitado un préstamo.
+              <p className="mt-1 text-sm text-slate-600">
+                Tienes solicitudes que necesitan tu respuesta.
               </p>
             </div>
 
@@ -471,29 +559,33 @@ export default function Home() {
               {pendingRequests.map((loan) => (
                 <div
                   key={loan.id}
-                  className="rounded-2xl border border-gray-200 p-4"
+                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
                 >
-                  <p className="font-semibold text-gray-900">
-                    {obtenerNombreContraparte(loan)}
+                  <p className="text-sm font-medium text-slate-500">
+                    Te solicita un préstamo
                   </p>
 
-                  <p className="mt-2 text-2xl font-bold text-gray-900">
+                  <p className="mt-1 text-lg font-bold text-slate-950">
+                    {obtenerNombre(loan.borrower_id)}
+                  </p>
+
+                  <p className="mt-3 text-3xl font-bold text-slate-950">
                     ${loan.amount.toFixed(2)}
                   </p>
 
                   {loan.description && (
-                    <p className="mt-2 text-sm text-gray-600">
+                    <p className="mt-2 text-sm leading-5 text-slate-600">
                       {loan.description}
                     </p>
                   )}
 
-                  <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="mt-5 grid grid-cols-2 gap-3">
                     <button
                       onClick={() =>
                         responderSolicitud(loan.id, false)
                       }
                       disabled={responseLoading === loan.id}
-                      className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-700 disabled:opacity-50"
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-3 font-semibold text-slate-800 disabled:opacity-50"
                     >
                       Rechazar
                     </button>
@@ -503,7 +595,7 @@ export default function Home() {
                         responderSolicitud(loan.id, true)
                       }
                       disabled={responseLoading === loan.id}
-                      className="rounded-xl bg-black px-4 py-3 font-semibold text-white disabled:opacity-50"
+                      className="rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white disabled:opacity-50"
                     >
                       {responseLoading === loan.id
                         ? "Guardando..."
@@ -516,109 +608,147 @@ export default function Home() {
           </section>
         )}
 
-        {/* PRÉSTAMOS ACTIVOS */}
-        <section className="rounded-3xl bg-white p-6 shadow">
-          <h2 className="text-xl font-bold text-gray-900">
-            Mis préstamos
-          </h2>
-
-          {myLoans.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-500">
-              No tienes préstamos activos.
-            </p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {myLoans.map((loan) => (
-                <div
-                  key={loan.id}
-                  className="rounded-2xl border border-gray-200 p-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="font-semibold text-gray-900">
-                      {obtenerNombreContraparte(loan)}
-                    </p>
-
-                    <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-                      Activo
-                    </span>
-                  </div>
-
-                  <p className="mt-3 text-2xl font-bold">
-                    ${loan.amount.toFixed(2)}
-                  </p>
-
-                  {loan.description && (
-                    <p className="mt-2 text-sm text-gray-600">
-                      {loan.description}
-                    </p>
-                  )}
-
-                  {loan.borrower_id === currentUserId && (
-                    <button
-                      onClick={() =>
-                        abrirRegistroPago(loan)
-                      }
-                      className="mt-4 w-full rounded-xl bg-black px-4 py-3 font-semibold text-white"
-                    >
-                      Registrar pago
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* PAGOS PENDIENTES DE CONFIRMACIÓN */}
-        {paymentPendingLoans.length > 0 && (
-          <section className="rounded-3xl bg-white p-6 shadow">
-            <h2 className="text-xl font-bold text-gray-900">
-              Pagos pendientes
+        {/* MIS PRÉSTAMOS */}
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <div>
+            <h2 className="text-xl font-bold text-slate-950">
+              Mis préstamos
             </h2>
 
-            <div className="mt-4 space-y-4">
-              {paymentPendingLoans.map((loan) => {
-                const payment = obtenerPago(loan.id);
+            <p className="mt-1 text-sm leading-5 text-slate-600">
+              Aquí ves claramente quién debe y quién recibe.
+            </p>
+          </div>
+
+          {myLoans.length === 0 ? (
+            <div className="mt-5 rounded-2xl bg-slate-50 p-5 text-center">
+              <p className="font-medium text-slate-700">
+                No tienes préstamos activos.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              {myLoans.map((loan) => {
+                const yoPreste = loan.lender_id === currentUserId;
+                const otraPersona = yoPreste
+                  ? obtenerNombre(loan.borrower_id)
+                  : obtenerNombre(loan.lender_id);
 
                 return (
                   <div
                     key={loan.id}
-                    className="rounded-2xl border border-gray-200 p-4"
+                    className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
                   >
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold">
-                        {obtenerNombreContraparte(loan)}
-                      </p>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-500">
+                          {yoPreste
+                            ? "Tú prestaste"
+                            : "Tú recibiste"}
+                        </p>
 
-                      <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-700">
-                        Pendiente
+                        <p className="mt-1 text-lg font-bold text-slate-950">
+                          {yoPreste
+                            ? `A ${otraPersona}`
+                            : `De ${otraPersona}`}
+                        </p>
+                      </div>
+
+                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
+                        Activo
                       </span>
                     </div>
 
-                    <p className="mt-3 text-2xl font-bold">
-                      $
-                      {(
-                        payment?.amount ?? loan.amount
-                      ).toFixed(2)}
-                    </p>
+                    <div className="mt-5 rounded-2xl bg-slate-100 p-4">
+                      <p className="text-sm font-semibold text-slate-600">
+                        {yoPreste
+                          ? `${otraPersona} te debe`
+                          : `Le debes a ${otraPersona}`}
+                      </p>
 
-                    {loan.lender_id === currentUserId && (
+                      <p className="mt-1 text-3xl font-bold text-slate-950">
+                        ${loan.amount.toFixed(2)}
+                      </p>
+                    </div>
+
+                    {loan.description && (
+                      <p className="mt-3 text-sm leading-5 text-slate-600">
+                        {loan.description}
+                      </p>
+                    )}
+
+                    {!yoPreste && (
                       <button
                         onClick={() =>
-                          alert(
-                            "La confirmación de recepción se implementará en el siguiente paso."
+                          abrirRegistroPago(loan)
+                        }
+                        className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white"
+                      >
+                        Registrar pago
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* PAGOS PENDIENTES */}
+        {paymentPendingLoans.length > 0 && (
+          <section className="rounded-3xl bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-bold text-slate-950">
+              Pagos pendientes
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-600">
+              Hay pagos esperando confirmación.
+            </p>
+
+            <div className="mt-5 space-y-4">
+              {paymentPendingLoans.map((loan) => {
+                const payment = obtenerPago(loan.id);
+                const yoPreste = loan.lender_id === currentUserId;
+                const otraPersona = yoPreste
+                  ? obtenerNombre(loan.borrower_id)
+                  : obtenerNombre(loan.lender_id);
+
+                return (
+                  <div
+                    key={loan.id}
+                    className="rounded-2xl border border-amber-200 bg-amber-50 p-5"
+                  >
+                    <p className="text-sm font-semibold text-amber-800">
+                      Pago pendiente
+                    </p>
+
+                    <p className="mt-1 text-lg font-bold text-slate-950">
+                      {yoPreste
+                        ? `${otraPersona} te pagó`
+                        : `Pagaste a ${otraPersona}`}
+                    </p>
+
+                    <p className="mt-3 text-3xl font-bold text-slate-950">
+                      ${(payment?.amount ?? loan.amount).toFixed(2)}
+                    </p>
+
+                    {yoPreste ? (
+                      <button
+                        onClick={() =>
+                          mostrarModal(
+                            "Confirmar recepción",
+                            "La confirmación de recepción se habilitará en el siguiente paso.",
+                            "info"
                           )
                         }
-                        className="mt-4 w-full rounded-xl bg-black px-4 py-3 font-semibold text-white"
+                        className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white"
                       >
                         Confirmar recepción
                       </button>
-                    )}
-
-                    {loan.borrower_id === currentUserId && (
-                      <p className="mt-4 text-sm text-gray-500">
-                        Esperando que la otra persona confirme
-                        la recepción.
+                    ) : (
+                      <p className="mt-4 text-sm font-medium leading-5 text-slate-600">
+                        El pago está registrado. Esperando que
+                        la otra persona confirme la recepción.
                       </p>
                     )}
                   </div>
@@ -629,14 +759,19 @@ export default function Home() {
         )}
 
         {/* SOLICITAR PRÉSTAMO */}
-        <section className="rounded-3xl bg-white p-6 shadow">
-          <h2 className="text-xl font-bold text-gray-900">
+        <section className="rounded-3xl bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-950">
             Solicitar préstamo
           </h2>
 
+          <p className="mt-1 text-sm text-slate-600">
+            El préstamo quedará activo cuando la otra persona
+            lo acepte.
+          </p>
+
           <div className="mt-5 space-y-4">
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
                 ¿A quién?
               </label>
 
@@ -649,7 +784,7 @@ export default function Home() {
 
                   setSelectedUser(user ?? null);
                 }}
-                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3"
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none focus:border-slate-600"
               >
                 <option value="">
                   Selecciona una persona
@@ -664,7 +799,7 @@ export default function Home() {
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
                 Cantidad
               </label>
 
@@ -677,12 +812,12 @@ export default function Home() {
                   setAmount(e.target.value)
                 }
                 placeholder="Ej. 500"
-                className="w-full rounded-xl border border-gray-300 px-4 py-3"
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-600"
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
+              <label className="mb-2 block text-sm font-semibold text-slate-800">
                 Descripción
               </label>
 
@@ -693,14 +828,14 @@ export default function Home() {
                 }
                 placeholder="¿Para qué es el préstamo?"
                 rows={3}
-                className="w-full rounded-xl border border-gray-300 px-4 py-3"
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-400 outline-none focus:border-slate-600"
               />
             </div>
 
             <button
               onClick={solicitarPrestamo}
               disabled={sending}
-              className="w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
+              className="w-full rounded-xl bg-slate-950 px-5 py-4 font-semibold text-white shadow-sm disabled:opacity-50"
             >
               {sending
                 ? "Enviando..."
@@ -712,28 +847,40 @@ export default function Home() {
 
       {/* MODAL DE PAGO */}
       {paymentLoan && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-4 sm:items-center">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold">
-                Registrar pago
-              </h2>
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">
+                  Registrar pago
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-600">
+                  Estás registrando un pago de este préstamo.
+                </p>
+              </div>
 
               <button
                 onClick={cerrarRegistroPago}
-                className="text-2xl text-gray-400"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-xl font-bold text-slate-700"
               >
                 ×
               </button>
             </div>
 
-            <p className="mt-3 text-sm text-gray-600">
-              Préstamo con {obtenerNombreContraparte(paymentLoan)}
-            </p>
+            <div className="mt-5 rounded-2xl bg-slate-100 p-4">
+              <p className="text-sm font-medium text-slate-600">
+                Pago a {obtenerNombre(paymentLoan.lender_id)}
+              </p>
+
+              <p className="mt-1 text-2xl font-bold text-slate-950">
+                ${paymentLoan.amount.toFixed(2)}
+              </p>
+            </div>
 
             <div className="mt-5 space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium">
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
                   Cantidad pagada
                 </label>
 
@@ -745,12 +892,12 @@ export default function Home() {
                   onChange={(e) =>
                     setPaymentAmount(e.target.value)
                   }
-                  className="w-full rounded-xl border border-gray-300 px-4 py-3"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-slate-600"
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium">
+                <label className="mb-2 block text-sm font-semibold text-slate-800">
                   Comprobante
                 </label>
 
@@ -762,24 +909,61 @@ export default function Home() {
                       e.target.files?.[0] ?? null
                     )
                   }
-                  className="w-full text-sm"
+                  className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-800"
                 />
 
-                <p className="mt-2 text-xs text-gray-500">
-                  JPG, PNG, WEBP o PDF. Máximo 5 MB.
+                <p className="mt-2 text-xs text-slate-500">
+                  JPG, PNG, WEBP o PDF · Máximo 5 MB
                 </p>
               </div>
 
               <button
                 onClick={registrarPago}
                 disabled={paymentSending}
-                className="w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
+                className="w-full rounded-xl bg-slate-950 px-5 py-4 font-semibold text-white disabled:opacity-50"
               >
                 {paymentSending
-                  ? "Registrando..."
-                  : "Confirmar pago"}
+                  ? "Guardando..."
+                  : "Guardar pago"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL GENERAL */}
+      {modal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-5">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
+            <div
+              className={`flex h-12 w-12 items-center justify-center rounded-full text-xl font-bold ${modal.type === "success"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : modal.type === "error"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-slate-100 text-slate-700"
+                }`}
+            >
+              {modal.type === "success"
+                ? "✓"
+                : modal.type === "error"
+                  ? "!"
+                  : "i"}
+            </div>
+
+            <h2 className="mt-5 text-xl font-bold text-slate-950">
+              {modal.title}
+            </h2>
+
+            <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+              {modal.message}
+            </p>
+
+            <button
+              onClick={cerrarModal}
+              className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white"
+            >
+              Entendido
+            </button>
           </div>
         </div>
       )}
