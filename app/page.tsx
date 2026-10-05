@@ -81,9 +81,9 @@ type ModalData = {
   message: string;
   type?: "success" | "error" | "info";
 };
+const supabase = createClient();
 
 export default function Home() {
-  const supabase = createClient();
 
   // =========================
   // SESIÓN
@@ -344,7 +344,10 @@ export default function Home() {
       if (session) {
         setCurrentUserId(session.user.id);
         setEmail(session.user.email || "");
-        loadData();
+
+        setTimeout(() => {
+          loadData();
+        }, 0);
       } else {
         setCurrentUserId(null);
         setEmail("");
