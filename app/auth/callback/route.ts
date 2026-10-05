@@ -6,31 +6,37 @@ export async function GET(request: Request) {
     const requestUrl = new URL(request.url);
     const code = requestUrl.searchParams.get("code");
 
-    if (code) {
-        const cookieStore = await cookies();
+    if (!code) {
+        return NextResponse.redirect(new URL("/", requestUrl.origin));
+    }
 
-        const supabase = createServerClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-            {
-                cookies: {
-                    getAll() {
-                        return cookieStore.getAll();
-                    },
-                    setAll(cookiesToSet) {
-                        try {
-                            cookiesToSet.forEach(({ name, value, options }) =>
-                                cookieStore.set(name, value, options)
-                            );
-                        } catch {
-                            // Puede ocurrir durante una respuesta de redirección.
-                        }
-                    },
+    const cookieStore = await cookies();
+
+    const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+        {
+            cookies: {
+                getAll() {
+                    return cookieStore.getAll();
                 },
-            }
-        );
+                setAll(cookiesToSet) {
+                    cookiesToSet.forEach(({ name, value, options }) => {
+                        cookieStore.set(name, value, options);
+                    });
+                },
+            },
+        }
+    );
 
-        await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+    if (error) {
+        console.error("ERROR CALLBACK:", error);
+
+        return NextResponse.redirect(
+            new URL(`/?auth_error=${encodeURIComponent(error.message)}`, requestUrl.origin)
+        );
     }
 
     return NextResponse.redirect(new URL("/", requestUrl.origin));
