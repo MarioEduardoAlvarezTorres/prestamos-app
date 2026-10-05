@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase";
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "../lib/supabase";
 
 import {
   registrarPrestamo as registrarPrestamoService,
@@ -14,6 +14,9 @@ import {
 import {
   crearGastoCompartido as crearGastoCompartidoService,
   responderGastoCompartido as responderGastoCompartidoService,
+  registrarPagoGastoCompartido as registrarPagoGastoCompartidoService,
+  confirmarPagoGastoCompartido as confirmarPagoGastoCompartidoService,
+  verComprobanteGastoCompartido as verComprobanteGastoCompartidoService,
 } from "../lib/gastos";
 
 type Profile = {
@@ -32,15 +35,8 @@ type Loan = {
   amount: number;
   description: string | null;
   due_date: string | null;
-  status:
-  | "pending"
-  | "active"
-  | "payment_pending"
-  | "completed"
-  | "rejected"
-  | "cancelled";
+  status: string;
   created_at: string;
-  updated_at: string;
 };
 
 type Payment = {
@@ -60,9 +56,8 @@ type SharedExpense = {
   title: string;
   description: string | null;
   total_amount: number;
-  status: "pending" | "active" | "completed" | "cancelled";
+  status: string;
   created_at: string;
-  updated_at: string;
 };
 
 type SharedExpenseParticipant = {
@@ -73,6 +68,11 @@ type SharedExpenseParticipant = {
   accepted: boolean;
   accepted_at: string | null;
   paid: boolean;
+  payment_amount?: number | null;
+  payment_evidence_url?: string | null;
+  payment_at?: string | null;
+  payment_confirmed?: boolean;
+  payment_confirmed_at?: string | null;
   created_at: string;
 };
 
@@ -82,11 +82,28 @@ type ModalData = {
   type?: "success" | "error" | "info";
 };
 
-const supabase = createClient();
+function money(value: number | null | undefined) {
+  return `$${Number(value || 0).toLocaleString("es-MX", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function dateText(value: string | null | undefined) {
+  if (!value) return "Sin fecha";
+
+  return new Date(value).toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
 
 export default function Home() {
-  const [email, setEmail] = useState("");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const supabase = createClient();
+
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
 
   const [users, setUsers] = useState<Profile[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
@@ -101,12 +118,11 @@ export default function Home() {
     "prestamos" | "gastos" | "historial"
   >("prestamos");
 
-  // ============================================================
-  // PRÉSTAMOS
-  // ============================================================
+  const [loading, setLoading] = useState(true);
+  const [responseLoading, setResponseLoading] = useState(false);
 
   const [selectedUser, setSelectedUser] = useState("");
-  const [amount, setAmount] = useState("");
+  const [loanAmount, setLoanAmount] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
 
@@ -114,49 +130,26 @@ export default function Home() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentFile, setPaymentFile] = useState<File | null>(null);
 
-  // ============================================================
-  // GASTOS COMPARTIDOS
-  // ============================================================
-
-  const [showSharedExpenseForm, setShowSharedExpenseForm] =
-    useState(false);
-
   const [sharedExpenseTitle, setSharedExpenseTitle] = useState("");
   const [sharedExpenseDescription, setSharedExpenseDescription] =
     useState("");
   const [sharedExpenseTotal, setSharedExpenseTotal] = useState("");
-
-  const [sharedExpenseUsers, setSharedExpenseUsers] = useState<string[]>(
-    []
-  );
-
+  const [sharedExpenseUsers, setSharedExpenseUsers] = useState<string[]>([]);
   const [sharedExpenseMode, setSharedExpenseMode] = useState<
     "equal" | "custom"
   >("equal");
-
-  const [sharedCustomAmounts, setSharedCustomAmounts] = useState<
+  const [sharedExpenseAmounts, setSharedExpenseAmounts] = useState<
     Record<string, string>
   >({});
 
-  // ============================================================
-  // ESTADOS
-  // ============================================================
-
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [paymentSending, setPaymentSending] = useState(false);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [responseLoading, setResponseLoading] = useState<string | null>(
+  const [sharedPaymentParticipant, setSharedPaymentParticipant] =
+    useState<SharedExpenseParticipant | null>(null);
+  const [sharedPaymentAmount, setSharedPaymentAmount] = useState("");
+  const [sharedPaymentFile, setSharedPaymentFile] = useState<File | null>(
     null
   );
-  const [sharedExpenseLoading, setSharedExpenseLoading] = useState(false);
 
   const [modal, setModal] = useState<ModalData | null>(null);
-  const [installPrompt, setInstallPrompt] = useState<any>(null);
-
-  // ============================================================
-  // HELPERS
-  // ============================================================
 
   function mostrarModal(
     title: string,
@@ -166,302 +159,130 @@ export default function Home() {
     setModal({ title, message, type });
   }
 
-  function cerrarModal() {
-    setModal(null);
-  }
-
-  function formatearMonto(value: number | string) {
-    return Number(value || 0).toLocaleString("es-MX", {
-      style: "currency",
-      currency: "MXN",
-    });
-  }
-
-  function formatearFecha(value: string | null) {
-    if (!value) return "Sin fecha";
-
-    return new Date(value).toLocaleDateString("es-MX", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  }
-
-  function formatearFechaHora(value: string | null) {
-    if (!value) return "Sin fecha";
-
-    return new Date(value).toLocaleString("es-MX", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  function obtenerNombre(userId: string) {
-    if (userId === currentUserId) {
-      return "Tú";
-    }
-
-    const user = users.find((item) => item.id === userId);
-
-    return user?.full_name || user?.email || "Usuario";
-  }
-
-  // ============================================================
-  // CARGAR DATOS
-  // ============================================================
-
   async function loadData() {
     try {
       setLoading(true);
 
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      if (!session) {
-        setCurrentUserId(null);
-        setEmail("");
-        setLoading(false);
+      if (!user) {
+        window.location.href = "/login";
         return;
       }
 
-      const userId = session.user.id;
+      setCurrentUserId(user.id);
 
-      setCurrentUserId(userId);
-      setEmail(session.user.email || "");
+      const [
+        profileResult,
+        usersResult,
+        loansResult,
+        paymentsResult,
+        expensesResult,
+        participantsResult,
+      ] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select(
+            "id, full_name, email, avatar_url, is_admin, is_active"
+          )
+          .eq("id", user.id)
+          .maybeSingle(),
 
-      const { data: profilesData, error: profilesError } = await supabase
-        .from("profiles")
-        .select(
-          "id, full_name, email, avatar_url, is_admin, is_active"
-        )
-        .eq("is_active", true)
-        .neq("id", userId)
-        .order("full_name", { ascending: true });
+        supabase
+          .from("profiles")
+          .select(
+            "id, full_name, email, avatar_url, is_admin, is_active"
+          )
+          .eq("is_active", true)
+          .neq("id", user.id)
+          .order("full_name"),
 
-      if (profilesError) {
-        console.error("Error cargando usuarios:", profilesError);
-      } else {
-        setUsers(profilesData || []);
-      }
+        supabase
+          .from("loans")
+          .select("*")
+          .or(`lender_id.eq.${user.id},borrower_id.eq.${user.id}`)
+          .order("created_at", { ascending: false }),
 
-      const { data: loansData, error: loansError } = await supabase
-        .from("loans")
-        .select("*")
-        .or(`lender_id.eq.${userId},borrower_id.eq.${userId}`)
-        .order("created_at", { ascending: false });
+        supabase
+          .from("loan_payments")
+          .select("*")
+          .order("created_at", { ascending: false }),
 
-      if (loansError) {
-        console.error("Error cargando préstamos:", loansError);
-      } else {
-        setLoans(loansData || []);
-      }
+        supabase
+          .from("shared_expenses")
+          .select("*")
+          .or(`created_by.eq.${user.id}`)
+          .order("created_at", { ascending: false }),
 
-      const { data: paymentsData, error: paymentsError } = await supabase
-        .from("loan_payments")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (paymentsError) {
-        console.error("Error cargando pagos:", paymentsError);
-      } else {
-        setPayments(paymentsData || []);
-      }
-
-      const { data: expensesData, error: expensesError } = await supabase
-        .from("shared_expenses")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (expensesError) {
-        console.error("Error cargando gastos:", expensesError);
-      } else {
-        setSharedExpenses(expensesData || []);
-      }
-
-      const { data: participantsData, error: participantsError } =
-        await supabase
+        supabase
           .from("shared_expense_participants")
-          .select("*");
+          .select("*")
+          .order("created_at", { ascending: true }),
+      ]);
 
-      if (participantsError) {
-        console.error(
-          "Error cargando participantes:",
-          participantsError
-        );
-      } else {
-        setSharedParticipants(participantsData || []);
-      }
-    } catch (error) {
-      console.error("Error general cargando datos:", error);
+      if (profileResult.error) throw profileResult.error;
+      if (usersResult.error) throw usersResult.error;
+      if (loansResult.error) throw loansResult.error;
+      if (paymentsResult.error) throw paymentsResult.error;
+      if (expensesResult.error) throw expensesResult.error;
+      if (participantsResult.error) throw participantsResult.error;
+
+      setCurrentUser(profileResult.data || null);
+      setUsers(usersResult.data || []);
+      setLoans(loansResult.data || []);
+      setPayments(paymentsResult.data || []);
+
+      const expenses = expensesResult.data || [];
+      const participants = participantsResult.data || [];
+
+      const participantExpenseIds = participants
+        .filter((p) => p.user_id === user.id)
+        .map((p) => p.expense_id);
+
+      const ownExpenses = expenses.filter(
+        (expense) =>
+          expense.created_by === user.id ||
+          participantExpenseIds.includes(expense.id)
+      );
+
+      setSharedExpenses(ownExpenses);
+      setSharedParticipants(participants);
+    } catch (error: any) {
+      console.error(error);
+      mostrarModal(
+        "Error",
+        error?.message || "No se pudieron cargar los datos.",
+        "error"
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  // ============================================================
-  // EFECTOS
-  // ============================================================
-
   useEffect(() => {
     loadData();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setCurrentUserId(session.user.id);
-        setEmail(session.user.email || "");
-
-        setTimeout(() => {
-          loadData();
-        }, 0);
-      } else {
-        setCurrentUserId(null);
-        setEmail("");
-        setLoans([]);
-        setPayments([]);
-        setUsers([]);
-        setSharedExpenses([]);
-        setSharedParticipants([]);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
   }, []);
-
-  useEffect(() => {
-    function handleBeforeInstallPrompt(event: Event) {
-      event.preventDefault();
-      setInstallPrompt(event);
-    }
-
-    window.addEventListener(
-      "beforeinstallprompt",
-      handleBeforeInstallPrompt
-    );
-
-    return () => {
-      window.removeEventListener(
-        "beforeinstallprompt",
-        handleBeforeInstallPrompt
-      );
-    };
-  }, []);
-
-  // ============================================================
-  // LOGIN
-  // ============================================================
-
-  async function loginWithGoogle() {
-    try {
-      setLoginLoading(true);
-
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback/`,
-        },
-      });
-
-      if (error) throw error;
-    } catch (error: any) {
-      console.error(error);
-
-      mostrarModal(
-        "No se pudo iniciar sesión",
-        error?.message || "Ocurrió un error al iniciar sesión.",
-        "error"
-      );
-
-      setLoginLoading(false);
-    }
-  }
-
-  // ============================================================
-  // LOGOUT
-  // ============================================================
 
   async function cerrarSesion() {
     await supabase.auth.signOut();
-
-    setCurrentUserId(null);
-    setEmail("");
-    setLoans([]);
-    setPayments([]);
-    setUsers([]);
-    setSharedExpenses([]);
-    setSharedParticipants([]);
+    window.location.href = "/login";
   }
-
-  // ============================================================
-  // PWA
-  // ============================================================
-
-  async function instalarAplicacion() {
-    if (!installPrompt) return;
-
-    installPrompt.prompt();
-
-    try {
-      await installPrompt.userChoice;
-    } catch {
-      // Usuario canceló.
-    }
-
-    setInstallPrompt(null);
-  }
-
-  // ============================================================
-  // REGISTRAR PRÉSTAMO
-  // ============================================================
 
   async function registrarPrestamo() {
-    if (!currentUserId) {
-      mostrarModal(
-        "Sesión requerida",
-        "No hay una sesión activa.",
-        "error"
-      );
-      return;
-    }
-
-    if (!selectedUser) {
-      mostrarModal(
-        "Falta seleccionar",
-        "Selecciona a la persona a quien le prestaste.",
-        "error"
-      );
-      return;
-    }
-
-    const numero = Number(amount);
-
-    if (!numero || numero <= 0) {
-      mostrarModal(
-        "Monto inválido",
-        "Escribe un monto válido.",
-        "error"
-      );
-      return;
-    }
-
-    if (selectedUser === currentUserId) {
-      mostrarModal(
-        "Persona inválida",
-        "No puedes registrarte un préstamo a ti mismo.",
-        "error"
-      );
-      return;
-    }
-
     try {
-      setSending(true);
+      const numero = Number(loanAmount);
+
+      if (!selectedUser) {
+        mostrarModal("Falta una persona", "Selecciona a quién le prestaste.");
+        return;
+      }
+
+      if (!numero || numero <= 0) {
+        mostrarModal("Cantidad inválida", "Escribe una cantidad mayor que cero.");
+        return;
+      }
 
       await registrarPrestamoService({
         borrowerId: selectedUser,
@@ -471,7 +292,7 @@ export default function Home() {
       });
 
       setSelectedUser("");
-      setAmount("");
+      setLoanAmount("");
       setDescription("");
       setDueDate("");
 
@@ -479,63 +300,48 @@ export default function Home() {
 
       mostrarModal(
         "Préstamo registrado",
-        `Registraste que le prestaste ${formatearMonto(
-          numero
-        )} a ${obtenerNombre(selectedUser)}. Esa persona debe confirmarlo.`,
+        "La solicitud fue enviada a la persona seleccionada.",
         "success"
       );
     } catch (error: any) {
       console.error(error);
-
       mostrarModal(
         "No se pudo registrar",
-        error?.message ||
-        "Ocurrió un error registrando el préstamo.",
+        error?.message || "Ocurrió un error.",
         "error"
       );
-    } finally {
-      setSending(false);
     }
   }
-
-  // ============================================================
-  // CONFIRMAR / RECHAZAR PRÉSTAMO
-  // ============================================================
 
   async function responderSolicitud(
     loanId: string,
     aceptar: boolean
   ) {
     try {
-      setResponseLoading(loanId);
+      setResponseLoading(true);
 
       await responderSolicitudService(loanId, aceptar);
 
       await loadData();
 
       mostrarModal(
-        aceptar ? "Préstamo confirmado" : "Préstamo rechazado",
+        aceptar ? "Solicitud aceptada" : "Solicitud rechazada",
         aceptar
-          ? "Confirmaste que recibiste este préstamo. Ahora queda activo."
-          : "Indicaste que no reconoces este préstamo.",
+          ? "El préstamo ahora está activo."
+          : "La solicitud fue rechazada.",
         aceptar ? "success" : "info"
       );
     } catch (error: any) {
       console.error(error);
-
       mostrarModal(
         "No se pudo responder",
         error?.message || "Ocurrió un error.",
         "error"
       );
     } finally {
-      setResponseLoading(null);
+      setResponseLoading(false);
     }
   }
-
-  // ============================================================
-  // PAGOS
-  // ============================================================
 
   function abrirRegistroPago(loan: Loan) {
     setPaymentLoan(loan);
@@ -559,12 +365,12 @@ export default function Home() {
       return;
     }
 
-    const maxSize = 10 * 1024 * 1024;
+    const maxSize = 20 * 1024 * 1024;
 
     if (file.size > maxSize) {
       mostrarModal(
         "Archivo demasiado grande",
-        "El comprobante debe pesar máximo 10 MB.",
+        "El comprobante debe pesar máximo 20 MB.",
         "error"
       );
 
@@ -577,83 +383,68 @@ export default function Home() {
   }
 
   async function registrarPago() {
-    if (!paymentLoan || !currentUserId) return;
-
-    const numero = Number(paymentAmount);
-
-    if (!numero || numero <= 0) {
-      mostrarModal(
-        "Monto inválido",
-        "Escribe un monto válido.",
-        "error"
-      );
-      return;
-    }
-
-    if (!paymentFile) {
-      mostrarModal(
-        "Falta comprobante",
-        "Debes seleccionar una imagen o PDF como comprobante.",
-        "error"
-      );
-      return;
-    }
-
     try {
-      setPaymentSending(true);
+      if (!paymentLoan) return;
+
+      if (!paymentFile) {
+        mostrarModal(
+          "Falta el comprobante",
+          "Selecciona el comprobante del pago.",
+          "error"
+        );
+        return;
+      }
+
+      const amount = Number(paymentAmount);
+
+      if (!amount || amount <= 0) {
+        mostrarModal(
+          "Cantidad inválida",
+          "Escribe una cantidad válida.",
+          "error"
+        );
+        return;
+      }
 
       await registrarPagoService({
         loanId: paymentLoan.id,
         userId: currentUserId,
-        amount: numero,
+        amount,
         file: paymentFile,
       });
 
       cerrarRegistroPago();
-
       await loadData();
 
       mostrarModal(
         "Pago registrado",
-        "El prestamista debe confirmar que recibió el pago.",
+        "El comprobante fue enviado para confirmación.",
         "success"
       );
     } catch (error: any) {
       console.error(error);
-
       mostrarModal(
-        "No se pudo registrar",
-        error?.message || "Ocurrió un error registrando el pago.",
+        "No se pudo registrar el pago",
+        error?.message || "Ocurrió un error.",
         "error"
       );
-    } finally {
-      setPaymentSending(false);
     }
   }
 
-  // ============================================================
-  // COMPROBANTE
-  // ============================================================
-
-  async function verComprobante(path: string | null) {
-    if (!path) {
-      mostrarModal(
-        "Sin comprobante",
-        "Este pago no tiene comprobante.",
-        "info"
-      );
-      return;
-    }
-
+  async function verComprobante(path: string) {
     try {
       const url = await verComprobanteService(path);
 
-      if (url) {
-        window.open(url, "_blank", "noopener,noreferrer");
+      const nuevaVentana = window.open(
+        url,
+        "_blank",
+        "noopener,noreferrer"
+      );
+
+      if (!nuevaVentana) {
+        window.location.assign(url);
       }
     } catch (error: any) {
-      console.error(error);
-
       mostrarModal(
         "No se pudo abrir",
         error?.message || "No se pudo abrir el comprobante.",
@@ -662,61 +453,42 @@ export default function Home() {
     }
   }
 
-  // ============================================================
-  // CONFIRMAR RECEPCIÓN DEL PAGO
-  // ============================================================
-
   async function confirmarRecepcion(loanId: string) {
     try {
-      setResponseLoading(loanId);
-
       await confirmarRecepcionService(loanId);
-
       await loadData();
 
       mostrarModal(
         "Pago confirmado",
-        "Confirmaste que recibiste el pago. El préstamo quedó completado.",
+        "La recepción del pago quedó confirmada.",
         "success"
       );
     } catch (error: any) {
-      console.error(error);
-
       mostrarModal(
         "No se pudo confirmar",
-        error?.message || "Ocurrió un error confirmando el pago.",
+        error?.message || "Ocurrió un error.",
         "error"
       );
-    } finally {
-      setResponseLoading(null);
     }
   }
-
-  // ============================================================
-  // GASTOS COMPARTIDOS
-  // ============================================================
 
   function toggleSharedExpenseUser(userId: string) {
     setSharedExpenseUsers((current) => {
       if (current.includes(userId)) {
-        const next = current.filter((id) => id !== userId);
-
-        setSharedCustomAmounts((amounts) => {
-          const copy = { ...amounts };
-          delete copy[userId];
-          return copy;
+        setSharedExpenseAmounts((amounts) => {
+          const next = { ...amounts };
+          delete next[userId];
+          return next;
         });
 
-        return next;
+        return current.filter((id) => id !== userId);
       }
 
       if (current.length >= 3) {
         mostrarModal(
-          "Máximo de personas",
-          "Puedes seleccionar hasta 3 personas además de ti.",
-          "info"
+          "Máximo alcanzado",
+          "Puedes seleccionar hasta 3 personas además de ti."
         );
-
         return current;
       }
 
@@ -725,111 +497,73 @@ export default function Home() {
   }
 
   function obtenerCantidadCompartida(userId: string) {
-    const total = Number(sharedExpenseTotal || 0);
+    const total = Number(sharedExpenseTotal);
+
+    if (!total || sharedExpenseUsers.length === 0) return 0;
 
     if (sharedExpenseMode === "custom") {
-      return Number(sharedCustomAmounts[userId] || 0);
+      return Number(sharedExpenseAmounts[userId] || 0);
     }
 
-    const cantidadPersonas = sharedExpenseUsers.length + 1;
-
-    if (!total || cantidadPersonas <= 0) {
-      return 0;
-    }
-
-    return Math.round((total / cantidadPersonas) * 100) / 100;
+    return total / (sharedExpenseUsers.length + 1);
   }
 
   function obtenerCantidadDelCreador() {
-    const total = Number(sharedExpenseTotal || 0);
+    const total = Number(sharedExpenseTotal);
 
-    if (sharedExpenseMode === "equal") {
-      const cantidadPersonas = sharedExpenseUsers.length + 1;
+    if (!total) return 0;
 
-      if (!total || cantidadPersonas <= 0) {
-        return 0;
-      }
-
-      return Math.round((total / cantidadPersonas) * 100) / 100;
-    }
-
-    const sumaOtros = sharedExpenseUsers.reduce(
-      (sum, userId) =>
-        sum + Number(sharedCustomAmounts[userId] || 0),
+    const otros = sharedExpenseUsers.reduce(
+      (sum, userId) => sum + obtenerCantidadCompartida(userId),
       0
     );
 
-    return Math.round((total - sumaOtros) * 100) / 100;
+    return total - otros;
   }
 
   async function crearGastoCompartido() {
-    const total = Number(sharedExpenseTotal);
-
-    if (!sharedExpenseTitle.trim()) {
-      mostrarModal(
-        "Falta el nombre",
-        "Escribe qué gasto estás compartiendo.",
-        "error"
-      );
-      return;
-    }
-
-    if (!total || total <= 0) {
-      mostrarModal(
-        "Monto inválido",
-        "El total debe ser mayor a cero.",
-        "error"
-      );
-      return;
-    }
-
-    if (sharedExpenseUsers.length === 0) {
-      mostrarModal(
-        "Faltan participantes",
-        "Selecciona al menos una persona.",
-        "error"
-      );
-      return;
-    }
-
-    if (sharedExpenseMode === "custom") {
-      const sumaOtros = sharedExpenseUsers.reduce(
-        (sum, userId) =>
-          sum + Number(sharedCustomAmounts[userId] || 0),
-        0
-      );
-
-      if (sumaOtros > total) {
-        mostrarModal(
-          "Montos inválidos",
-          "La suma de las cantidades no puede superar el total.",
-          "error"
-        );
-        return;
-      }
-
-      const cantidadesInvalidas = sharedExpenseUsers.some(
-        (userId) =>
-          Number(sharedCustomAmounts[userId] || 0) <= 0
-      );
-
-      if (cantidadesInvalidas) {
-        mostrarModal(
-          "Faltan cantidades",
-          "Escribe cuánto debe pagar cada participante.",
-          "error"
-        );
-        return;
-      }
-    }
-
     try {
-      setSharedExpenseLoading(true);
+      const total = Number(sharedExpenseTotal);
+
+      if (!sharedExpenseTitle.trim()) {
+        mostrarModal("Falta el nombre", "Escribe el nombre del gasto.");
+        return;
+      }
+
+      if (!total || total <= 0) {
+        mostrarModal(
+          "Total inválido",
+          "El total debe ser mayor que cero."
+        );
+        return;
+      }
+
+      if (sharedExpenseUsers.length === 0) {
+        mostrarModal(
+          "Faltan participantes",
+          "Selecciona al menos una persona."
+        );
+        return;
+      }
 
       const participants = sharedExpenseUsers.map((userId) => ({
         user_id: userId,
-        amount: obtenerCantidadCompartida(userId),
+        amount: Number(obtenerCantidadCompartida(userId).toFixed(2)),
       }));
+
+      const participantTotal = participants.reduce(
+        (sum, participant) => sum + participant.amount,
+        0
+      );
+
+      if (participantTotal > total) {
+        mostrarModal(
+          "Cantidades inválidas",
+          "La suma de las cantidades supera el total.",
+          "error"
+        );
+        return;
+      }
 
       await crearGastoCompartidoService({
         title: sharedExpenseTitle.trim(),
@@ -843,27 +577,23 @@ export default function Home() {
       setSharedExpenseDescription("");
       setSharedExpenseTotal("");
       setSharedExpenseUsers([]);
+      setSharedExpenseAmounts({});
       setSharedExpenseMode("equal");
-      setSharedCustomAmounts({});
-      setShowSharedExpenseForm(false);
 
       await loadData();
 
       mostrarModal(
         "Gasto creado",
-        "Las personas seleccionadas recibieron la solicitud.",
+        "Las personas seleccionadas ahora tienen una solicitud pendiente.",
         "success"
       );
     } catch (error: any) {
       console.error(error);
-
       mostrarModal(
         "No se pudo crear",
-        error?.message || "Ocurrió un error creando el gasto.",
+        error?.message || "Ocurrió un error.",
         "error"
       );
-    } finally {
-      setSharedExpenseLoading(false);
     }
   }
 
@@ -872,7 +602,7 @@ export default function Home() {
     aceptar: boolean
   ) {
     try {
-      setResponseLoading(expenseId);
+      setResponseLoading(true);
 
       await responderGastoCompartidoService(
         expenseId,
@@ -884,193 +614,330 @@ export default function Home() {
       mostrarModal(
         aceptar ? "Gasto aceptado" : "Gasto rechazado",
         aceptar
-          ? "Aceptaste tu parte del gasto."
+          ? "Aceptaste participar en el gasto."
           : "Rechazaste participar en el gasto.",
         aceptar ? "success" : "info"
       );
     } catch (error: any) {
       console.error(error);
-
       mostrarModal(
         "No se pudo responder",
         error?.message || "Ocurrió un error.",
         "error"
       );
     } finally {
-      setResponseLoading(null);
+      setResponseLoading(false);
     }
   }
 
-  // ============================================================
-  // DATOS DERIVADOS
-  // ============================================================
+  function abrirPagoGasto(
+    participant: SharedExpenseParticipant
+  ) {
+    setSharedPaymentParticipant(participant);
+    setSharedPaymentAmount(String(participant.amount));
+    setSharedPaymentFile(null);
+  }
 
-  // Solo préstamos activos.
-  // Los pagos pendientes ya NO aparecen aquí.
-  const misPrestamos = loans.filter(
-    (loan) =>
-      loan.status === "active" &&
-      (loan.lender_id === currentUserId ||
-        loan.borrower_id === currentUserId)
+  function cerrarPagoGasto() {
+    setSharedPaymentParticipant(null);
+    setSharedPaymentAmount("");
+    setSharedPaymentFile(null);
+  }
+
+  function seleccionarComprobanteGasto(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0] || null;
+
+    if (!file) {
+      setSharedPaymentFile(null);
+      return;
+    }
+
+    const maxSize = 20 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      mostrarModal(
+        "Archivo demasiado grande",
+        "El comprobante debe pesar máximo 20 MB.",
+        "error"
+      );
+
+      event.target.value = "";
+      setSharedPaymentFile(null);
+      return;
+    }
+
+    setSharedPaymentFile(file);
+  }
+
+  async function registrarPagoGasto() {
+    try {
+      if (!sharedPaymentParticipant) return;
+
+      if (!sharedPaymentFile) {
+        mostrarModal(
+          "Falta el comprobante",
+          "Selecciona el comprobante del pago.",
+          "error"
+        );
+        return;
+      }
+
+      const amount = Number(sharedPaymentAmount);
+
+      if (!amount || amount <= 0) {
+        mostrarModal(
+          "Cantidad inválida",
+          "Escribe una cantidad válida.",
+          "error"
+        );
+        return;
+      }
+
+      await registrarPagoGastoCompartidoService({
+        participantId: sharedPaymentParticipant.id,
+        amount,
+        file: sharedPaymentFile,
+      });
+
+      cerrarPagoGasto();
+      await loadData();
+
+      mostrarModal(
+        "Pago enviado",
+        "El creador del gasto debe confirmar la recepción.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+      mostrarModal(
+        "No se pudo registrar",
+        error?.message || "Ocurrió un error.",
+        "error"
+      );
+    }
+  }
+
+  async function confirmarPagoGasto(
+    participantId: string
+  ) {
+    try {
+      await confirmarPagoGastoCompartidoService(
+        participantId
+      );
+
+      await loadData();
+
+      mostrarModal(
+        "Pago confirmado",
+        "El pago quedó confirmado correctamente.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+      mostrarModal(
+        "No se pudo confirmar",
+        error?.message || "Ocurrió un error.",
+        "error"
+      );
+    }
+  }
+
+  async function verComprobanteGasto(path: string) {
+    try {
+      const url =
+        await verComprobanteGastoCompartidoService(path);
+
+      const nuevaVentana = window.open(
+        url,
+        "_blank",
+        "noopener,noreferrer"
+      );
+
+      if (!nuevaVentana) {
+        window.location.assign(url);
+      }
+    } catch (error: any) {
+      mostrarModal(
+        "No se pudo abrir",
+        error?.message || "No se pudo abrir el comprobante.",
+        "error"
+      );
+    }
+  }
+
+  const misPrestamos = useMemo(
+    () =>
+      loans.filter(
+        (loan) =>
+          loan.status === "active" &&
+          (loan.lender_id === currentUserId ||
+            loan.borrower_id === currentUserId)
+      ),
+    [loans, currentUserId]
   );
 
-  const prestamosPorConfirmar = loans.filter(
-    (loan) =>
-      loan.status === "pending" &&
-      loan.borrower_id === currentUserId
+  const prestamosPorConfirmar = useMemo(
+    () =>
+      loans.filter(
+        (loan) =>
+          loan.status === "pending" &&
+          loan.borrower_id === currentUserId
+      ),
+    [loans, currentUserId]
   );
 
-  // Solo los pagos que el prestamista debe revisar.
-  const pagosPendientes = loans.filter(
-    (loan) =>
-      loan.status === "payment_pending" &&
-      loan.lender_id === currentUserId
+  const pagosPendientes = useMemo(
+    () =>
+      loans.filter(
+        (loan) =>
+          loan.status === "payment_pending" &&
+          loan.lender_id === currentUserId
+      ),
+    [loans, currentUserId]
   );
 
-  const historialPrestamos = loans.filter(
-    (loan) =>
-      loan.status === "completed" ||
-      loan.status === "rejected" ||
-      loan.status === "cancelled"
+  const historialPrestamos = useMemo(
+    () =>
+      loans.filter(
+        (loan) =>
+          loan.status === "completed" ||
+          loan.status === "rejected" ||
+          loan.status === "cancelled"
+      ),
+    [loans]
   );
 
-  const gastosPendientes = sharedExpenses.filter((expense) => {
-    if (!currentUserId) return false;
-
-    return sharedParticipants.some(
-      (participant) =>
-        participant.expense_id === expense.id &&
-        participant.user_id === currentUserId &&
-        participant.accepted === false
-    );
-  });
-
-  const misGastosCompartidos = sharedExpenses.filter((expense) => {
-    if (!currentUserId) return false;
-
-    return (
-      expense.created_by === currentUserId ||
-      sharedParticipants.some(
-        (participant) =>
-          participant.expense_id === expense.id &&
-          participant.user_id === currentUserId
-      )
-    );
-  });
-
-  const historialGastos = sharedExpenses.filter(
-    (expense) =>
-      expense.status === "completed" ||
-      expense.status === "cancelled"
+  const misGastos = useMemo(
+    () =>
+      sharedExpenses.filter((expense) =>
+        sharedParticipants.some(
+          (participant) =>
+            participant.expense_id === expense.id &&
+            (participant.user_id === currentUserId ||
+              expense.created_by === currentUserId)
+        )
+      ),
+    [sharedExpenses, sharedParticipants, currentUserId]
   );
 
-  // ============================================================
-  // CARGANDO
-  // ============================================================
+  const gastosPorConfirmar = useMemo(
+    () =>
+      sharedExpenses.filter((expense) =>
+        sharedParticipants.some(
+          (participant) =>
+            participant.expense_id === expense.id &&
+            participant.user_id === currentUserId &&
+            !participant.accepted &&
+            expense.status === "pending"
+        )
+      ),
+    [sharedExpenses, sharedParticipants, currentUserId]
+  );
+
+  const getProfile = (userId: string) =>
+    userId === currentUserId
+      ? currentUser
+      : users.find((user) => user.id === userId);
+
+  const getLoanPayment = (loanId: string) =>
+    payments.find((payment) => payment.loan_id === loanId);
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
-        <div className="text-center">
-          <div className="text-3xl mb-3">💸</div>
-          <p className="text-slate-600">Cargando...</p>
-        </div>
-      </main>
-    );
-  }
-
-  // ============================================================
-  // LOGIN
-  // ============================================================
-
-  if (!currentUserId) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-7">
-          <div className="text-center">
-            <div className="text-5xl mb-4">💸</div>
-
-            <h1 className="text-2xl font-bold text-slate-900">
-              Préstamos
-            </h1>
-
-            <p className="text-slate-500 mt-2">
-              Registra préstamos y gastos compartidos
-              entre tu grupo.
-            </p>
+      <main className="min-h-screen bg-slate-50 px-4 py-10">
+        <div className="mx-auto max-w-md text-center">
+          <div className="text-lg font-semibold text-slate-900">
+            Cargando...
           </div>
-
-          <button
-            onClick={loginWithGoogle}
-            disabled={loginLoading}
-            className="w-full mt-7 rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
-          >
-            {loginLoading
-              ? "Conectando..."
-              : "Continuar con Google"}
-          </button>
         </div>
       </main>
     );
   }
-
-  // ============================================================
-  // APP
-  // ============================================================
 
   return (
     <main className="min-h-screen bg-slate-50 pb-24">
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-        <div className="max-w-xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div className="mx-auto w-full max-w-md px-4 pt-5">
+
+        {/* HEADER */}
+        <header className="mb-5 flex items-center justify-between">
           <div>
-            <p className="text-xs text-slate-500">
-              Conectado como
+            <p className="text-xs font-medium text-slate-500">
+              Mis préstamos
             </p>
 
-            <p className="font-semibold text-slate-900 truncate max-w-[220px]">
-              {email}
-            </p>
+            <h1 className="text-2xl font-bold text-slate-900">
+              {currentUser?.full_name ||
+                currentUser?.email ||
+                "Mi cuenta"}
+            </h1>
           </div>
 
           <button
+            type="button"
             onClick={cerrarSesion}
-            className="text-sm text-red-600 font-semibold"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
           >
             Salir
           </button>
-        </div>
-      </header>
+        </header>
 
-      <div className="max-w-xl mx-auto px-4 pt-5">
-        {installPrompt && (
+        {/* TABS */}
+        <div className="mb-5 grid grid-cols-3 rounded-2xl bg-white p-1 shadow-sm">
           <button
-            onClick={instalarAplicacion}
-            className="w-full mb-5 rounded-2xl bg-indigo-600 text-white py-3 font-semibold"
+            type="button"
+            onClick={() => setActiveTab("prestamos")}
+            className={`rounded-xl px-2 py-3 text-sm font-semibold ${
+              activeTab === "prestamos"
+                ? "bg-slate-900 text-white"
+                : "text-slate-600"
+            }`}
           >
-            📱 Instalar aplicación
+            Préstamos
           </button>
-        )}
 
-        {/* =====================================================
-            PRÉSTAMOS
-        ===================================================== */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("gastos")}
+            className={`rounded-xl px-2 py-3 text-sm font-semibold ${
+              activeTab === "gastos"
+                ? "bg-slate-900 text-white"
+                : "text-slate-600"
+            }`}
+          >
+            Gastos
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("historial")}
+            className={`rounded-xl px-2 py-3 text-sm font-semibold ${
+              activeTab === "historial"
+                ? "bg-slate-900 text-white"
+                : "text-slate-600"
+            }`}
+          >
+            Historial
+          </button>
+        </div>
+
+        {/* ================================================= */}
+        {/* PRÉSTAMOS */}
+        {/* ================================================= */}
 
         {activeTab === "prestamos" && (
           <div className="space-y-5">
 
-            {/* REGISTRAR PRÉSTAMO */}
+            {/* CREAR PRÉSTAMO */}
+            <section className="rounded-2xl bg-white p-4 shadow-sm">
+              <h2 className="mb-1 text-lg font-bold text-slate-900">
+                Registrar a quién le prestaste
+              </h2>
 
-            <section className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
-              <div className="mb-5">
-                <h2 className="text-xl font-bold text-slate-900">
-                  Registrar dinero prestado
-                </h2>
-
-                <p className="text-sm text-slate-700 mt-1">
-                  Registra a quién le prestaste dinero.
-                  Esa persona deberá confirmar el préstamo.
-                </p>
-              </div>
+              <p className="mb-4 text-sm text-slate-500">
+                La persona deberá aceptar el préstamo.
+              </p>
 
               <div className="space-y-3">
                 <select
@@ -1078,10 +945,10 @@ export default function Home() {
                   onChange={(event) =>
                     setSelectedUser(event.target.value)
                   }
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 bg-white text-slate-900"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base"
                 >
                   <option value="">
-                    ¿A quién le prestaste?
+                    Selecciona una persona
                   </option>
 
                   {users.map((user) => (
@@ -1094,22 +961,24 @@ export default function Home() {
                 <input
                   type="number"
                   inputMode="decimal"
-                  placeholder="¿Cuánto le prestaste?"
-                  value={amount}
+                  min="0"
+                  step="0.01"
+                  value={loanAmount}
                   onChange={(event) =>
-                    setAmount(event.target.value)
+                    setLoanAmount(event.target.value)
                   }
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                  placeholder="Cantidad"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
                 />
 
                 <input
                   type="text"
-                  placeholder="Concepto (opcional)"
                   value={description}
                   onChange={(event) =>
                     setDescription(event.target.value)
                   }
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                  placeholder="Descripción"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
                 />
 
                 <input
@@ -1118,185 +987,163 @@ export default function Home() {
                   onChange={(event) =>
                     setDueDate(event.target.value)
                   }
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
                 />
 
                 <button
+                  type="button"
                   onClick={registrarPrestamo}
-                  disabled={sending}
-                  className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
+                  className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white active:opacity-80"
                 >
-                  {sending
-                    ? "Registrando..."
-                    : "Registrar préstamo"}
+                  Registrar préstamo
                 </button>
               </div>
             </section>
 
-            {/* PRÉSTAMOS POR CONFIRMAR */}
-
+            {/* SOLICITUDES */}
             {prestamosPorConfirmar.length > 0 && (
               <section>
-                <h2 className="text-lg font-bold text-slate-900 mb-3">
-                  Préstamos por confirmar
+                <h2 className="mb-3 text-lg font-bold text-slate-900">
+                  Préstamos por aceptar
                 </h2>
 
                 <div className="space-y-3">
-                  {prestamosPorConfirmar.map((loan) => (
-                    <div
-                      key={loan.id}
-                      className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
-                    >
-                      <div className="flex justify-between gap-4">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            {obtenerNombre(loan.lender_id)}
-                          </p>
+                  {prestamosPorConfirmar.map((loan) => {
+                    const lender = getProfile(loan.lender_id);
 
-                          <p className="text-sm text-slate-700 mt-1">
-                            Registró que te prestó este dinero
-                          </p>
+                    return (
+                      <article
+                        key={loan.id}
+                        className="rounded-2xl border border-amber-200 bg-amber-50 p-4"
+                      >
+                        <p className="font-bold text-slate-900">
+                          {money(loan.amount)}
+                        </p>
 
-                          <p className="text-sm text-slate-700 mt-1">
-                            {loan.description || "Préstamo"}
+                        <p className="mt-1 text-sm text-slate-600">
+                          Te prestó{" "}
+                          <strong>
+                            {lender?.full_name || "Otra persona"}
+                          </strong>
+                        </p>
+
+                        {loan.description && (
+                          <p className="mt-2 text-sm text-slate-600">
+                            {loan.description}
                           </p>
+                        )}
+
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={responseLoading}
+                            onClick={() =>
+                              responderSolicitud(
+                                loan.id,
+                                false
+                              )
+                            }
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-3 font-semibold text-slate-700"
+                          >
+                            Rechazar
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={responseLoading}
+                            onClick={() =>
+                              responderSolicitud(
+                                loan.id,
+                                true
+                              )
+                            }
+                            className="rounded-xl bg-slate-900 px-3 py-3 font-semibold text-white"
+                          >
+                            Aceptar
+                          </button>
                         </div>
-
-                        <p className="font-bold text-lg text-slate-900">
-                          {formatearMonto(loan.amount)}
-                        </p>
-                      </div>
-
-                      <div className="mt-4 text-sm text-slate-700 space-y-1">
-                        <p>
-                          Fecha del registro:{" "}
-                          {formatearFecha(loan.created_at)}
-                        </p>
-
-                        <p>
-                          Fecha límite:{" "}
-                          {formatearFecha(loan.due_date)}
-                        </p>
-                      </div>
-
-                      <p className="text-sm text-amber-800 mt-4">
-                        Confirma si efectivamente recibiste este préstamo.
-                      </p>
-
-                      <div className="grid grid-cols-2 gap-2 mt-4">
-                        <button
-                          onClick={() =>
-                            responderSolicitud(loan.id, true)
-                          }
-                          disabled={
-                            responseLoading === loan.id
-                          }
-                          className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
-                        >
-                          {responseLoading === loan.id
-                            ? "Confirmando..."
-                            : "Sí, confirmar"}
-                        </button>
-
-                        <button
-                          onClick={() =>
-                            responderSolicitud(loan.id, false)
-                          }
-                          disabled={
-                            responseLoading === loan.id
-                          }
-                          className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
-                        >
-                          No lo reconozco
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             )}
 
-            {/* PRÉSTAMOS ACTIVOS */}
-
+            {/* ACTIVOS */}
             <section>
-              <h2 className="text-lg font-bold text-slate-900 mb-3">
+              <h2 className="mb-3 text-lg font-bold text-slate-900">
                 Préstamos activos
               </h2>
 
               {misPrestamos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">
-                    No tienes préstamos activos.
-                  </p>
+                <div className="rounded-2xl bg-white p-5 text-center text-sm text-slate-500">
+                  No tienes préstamos activos.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {misPrestamos.map((loan) => {
-                    const soyPrestamista =
-                      loan.lender_id === currentUserId;
+                    const otherUserId =
+                      loan.lender_id === currentUserId
+                        ? loan.borrower_id
+                        : loan.lender_id;
 
-                    const soyDeudor =
+                    const other = getProfile(otherUserId);
+                    const isBorrower =
                       loan.borrower_id === currentUserId;
 
                     return (
-                      <div
+                      <article
                         key={loan.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
+                        className="rounded-2xl bg-white p-4 shadow-sm"
                       >
-                        <div className="flex justify-between gap-4">
+                        <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="font-semibold text-slate-900">
-                              {soyPrestamista
-                                ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
-                                : `Te prestó ${obtenerNombre(
-                                  loan.lender_id
-                                )}`}
+                            <p className="text-xl font-bold text-slate-900">
+                              {money(loan.amount)}
                             </p>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              {loan.description || "Préstamo"}
+                            <p className="text-sm text-slate-600">
+                              {isBorrower
+                                ? `Le debes a ${
+                                    other?.full_name ||
+                                    "otra persona"
+                                  }`
+                                : `${
+                                    other?.full_name ||
+                                    "Otra persona"
+                                  } te debe`}
                             </p>
                           </div>
 
-                          <p className="font-bold text-lg whitespace-nowrap text-slate-900">
-                            {formatearMonto(loan.amount)}
-                          </p>
+                          <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                            Activo
+                          </span>
                         </div>
 
-                        <div className="mt-4 text-sm text-slate-700 space-y-1">
-                          <p>
-                            Registrado:{" "}
-                            {formatearFecha(loan.created_at)}
+                        {loan.description && (
+                          <p className="mt-3 text-sm text-slate-600">
+                            {loan.description}
                           </p>
+                        )}
 
-                          <p>
-                            Fecha límite:{" "}
-                            {formatearFecha(loan.due_date)}
+                        {loan.due_date && (
+                          <p className="mt-2 text-xs text-slate-500">
+                            Vence: {dateText(loan.due_date)}
                           </p>
-                        </div>
+                        )}
 
-                        <div className="mt-4">
-                          {soyDeudor && (
-                            <button
-                              onClick={() =>
-                                abrirRegistroPago(loan)
-                              }
-                              className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                            >
-                              Registrar pago
-                            </button>
-                          )}
-
-                          {soyPrestamista && (
-                            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
-                              Esperando el pago de{" "}
-                              {obtenerNombre(loan.borrower_id)}.
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                        {isBorrower && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              abrirRegistroPago(loan)
+                            }
+                            className="mt-4 w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
+                          >
+                            Registrar pago
+                          </button>
+                        )}
+                      </article>
                     );
                   })}
                 </div>
@@ -1304,122 +1151,78 @@ export default function Home() {
             </section>
 
             {/* PAGOS POR CONFIRMAR */}
-
             {pagosPendientes.length > 0 && (
               <section>
-                <h2 className="text-lg font-bold text-slate-900 mb-3">
+                <h2 className="mb-3 text-lg font-bold text-slate-900">
                   Pagos por confirmar
                 </h2>
 
                 <div className="space-y-3">
                   {pagosPendientes.map((loan) => {
-                    const payment = payments.find(
-                      (item) => item.loan_id === loan.id
+                    const payment = getLoanPayment(loan.id);
+                    const borrower = getProfile(
+                      loan.borrower_id
                     );
 
                     return (
-                      <div
+                      <article
                         key={loan.id}
-                        className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
+                        className="rounded-2xl border border-blue-200 bg-blue-50 p-4"
                       >
-                        <div className="flex justify-between gap-4">
+                        <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="font-semibold text-slate-900">
-                              {obtenerNombre(loan.borrower_id)}
+                            <p className="text-lg font-bold text-slate-900">
+                              {money(
+                                payment?.amount ||
+                                  loan.amount
+                              )}
                             </p>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Registró un pago de este préstamo.
-                            </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              {loan.description || "Préstamo"}
-                            </p>
-                          </div>
-
-                          <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
-                            {formatearMonto(
-                              payment?.amount || loan.amount
-                            )}
-                          </p>
-                        </div>
-
-                        <div className="mt-4 text-sm text-slate-700 space-y-1">
-                          <p>
-                            Préstamo original:{" "}
-                            {formatearMonto(loan.amount)}
-                          </p>
-
-                          <p>
-                            Pago registrado:{" "}
-                            {formatearMonto(
-                              payment?.amount || loan.amount
-                            )}
-                          </p>
-
-                          <p>
-                            Fecha del pago:{" "}
-                            {formatearFechaHora(
-                              payment?.created_at || null
-                            )}
-                          </p>
-
-                          <p>
-                            Fecha límite original:{" "}
-                            {formatearFecha(loan.due_date)}
-                          </p>
-                        </div>
-
-                        {loan.description && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="text-xs font-semibold text-slate-500 uppercase">
-                              Concepto
-                            </p>
-
-                            <p className="text-sm text-slate-900 mt-1">
-                              {loan.description}
+                            <p className="text-sm text-slate-600">
+                              Pago de{" "}
+                              <strong>
+                                {borrower?.full_name ||
+                                  "Otra persona"}
+                              </strong>
                             </p>
                           </div>
+
+                          <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                            Por confirmar
+                          </span>
+                        </div>
+
+                        {payment?.created_at && (
+                          <p className="mt-2 text-xs text-slate-500">
+                            Enviado:{" "}
+                            {dateText(payment.created_at)}
+                          </p>
                         )}
-
-                        <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
-                          <p className="font-semibold text-amber-900">
-                            Revisa el comprobante
-                          </p>
-
-                          <p className="text-sm text-amber-800 mt-1">
-                            Confirma la recepción solamente si
-                            efectivamente recibiste este pago.
-                          </p>
-                        </div>
 
                         {payment?.evidence_url && (
                           <button
+                            type="button"
                             onClick={() =>
                               verComprobante(
-                                payment.evidence_url
+                                payment.evidence_url!
                               )
                             }
-                            className="w-full mt-4 rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                            className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 font-semibold text-slate-700"
                           >
                             Ver comprobante
                           </button>
                         )}
 
                         <button
+                          type="button"
                           onClick={() =>
                             confirmarRecepcion(loan.id)
                           }
-                          disabled={
-                            responseLoading === loan.id
-                          }
-                          className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                          className="mt-2 w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
                         >
-                          {responseLoading === loan.id
-                            ? "Confirmando..."
-                            : "Confirmar que recibí el pago"}
+                          Confirmar que recibí el pago
                         </button>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -1428,343 +1231,472 @@ export default function Home() {
           </div>
         )}
 
-        {/* =====================================================
-            GASTOS
-        ===================================================== */}
+        {/* ================================================= */}
+        {/* GASTOS COMPARTIDOS */}
+        {/* ================================================= */}
 
         {activeTab === "gastos" && (
           <div className="space-y-5">
-            <section className="bg-white rounded-3xl border border-slate-200 shadow-sm p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">
-                    Gastos compartidos
-                  </h2>
 
-                  <p className="text-sm text-slate-700 mt-1">
-                    Divide una comida, salida o compra
-                    entre varias personas.
+            {/* CREAR GASTO */}
+            <section className="rounded-2xl bg-white p-4 shadow-sm">
+              <h2 className="mb-1 text-lg font-bold text-slate-900">
+                Crear gasto compartido
+              </h2>
+
+              <p className="mb-4 text-sm text-slate-500">
+                Selecciona quién debe pagarte.
+              </p>
+
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={sharedExpenseTitle}
+                  onChange={(event) =>
+                    setSharedExpenseTitle(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Nombre del gasto"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
+                />
+
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={sharedExpenseTotal}
+                  onChange={(event) =>
+                    setSharedExpenseTotal(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Total"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
+                />
+
+                <input
+                  type="text"
+                  value={sharedExpenseDescription}
+                  onChange={(event) =>
+                    setSharedExpenseDescription(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Descripción opcional"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
+                />
+
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-slate-700">
+                    ¿Cómo dividir?
                   </p>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSharedExpenseMode("equal")
+                      }
+                      className={`rounded-xl px-3 py-3 text-sm font-semibold ${
+                        sharedExpenseMode === "equal"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 bg-white text-slate-700"
+                      }`}
+                    >
+                      Partes iguales
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSharedExpenseMode("custom")
+                      }
+                      className={`rounded-xl px-3 py-3 text-sm font-semibold ${
+                        sharedExpenseMode === "custom"
+                          ? "bg-slate-900 text-white"
+                          : "border border-slate-300 bg-white text-slate-700"
+                      }`}
+                    >
+                      Cantidades
+                    </button>
+                  </div>
                 </div>
 
-                <button
-                  onClick={() =>
-                    setShowSharedExpenseForm((value) => !value)
-                  }
-                  className="rounded-2xl bg-slate-900 text-white px-4 py-3 font-semibold"
-                >
-                  {showSharedExpenseForm ? "Cerrar" : "Nuevo"}
-                </button>
-              </div>
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-slate-700">
+                    Personas que deben pagar
+                  </p>
 
-              {showSharedExpenseForm && (
-                <div className="mt-5 space-y-4">
-                  <input
-                    type="text"
-                    placeholder="¿Qué pagaste?"
-                    value={sharedExpenseTitle}
-                    onChange={(event) =>
-                      setSharedExpenseTitle(event.target.value)
-                    }
-                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
-                  />
+                  <div className="space-y-2">
+                    {users.map((user) => {
+                      const selected =
+                        sharedExpenseUsers.includes(user.id);
 
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder="Total"
-                    value={sharedExpenseTotal}
-                    onChange={(event) =>
-                      setSharedExpenseTotal(event.target.value)
-                    }
-                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
-                  />
-
-                  <textarea
-                    placeholder="Descripción (opcional)"
-                    value={sharedExpenseDescription}
-                    onChange={(event) =>
-                      setSharedExpenseDescription(event.target.value)
-                    }
-                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500 min-h-24"
-                  />
-
-                  <div>
-                    <p className="font-semibold text-slate-900 mb-2">
-                      Participantes
-                    </p>
-
-                    <div className="space-y-2">
-                      {users.map((user) => {
-                        const selected =
-                          sharedExpenseUsers.includes(user.id);
-
-                        return (
+                      return (
+                        <div
+                          key={user.id}
+                          className="flex items-center gap-2"
+                        >
                           <button
-                            key={user.id}
+                            type="button"
                             onClick={() =>
-                              toggleSharedExpenseUser(user.id)
+                              toggleSharedExpenseUser(
+                                user.id
+                              )
                             }
-                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
-                                ? "border-slate-900 bg-slate-100"
-                                : "border-slate-200 bg-white"
-                              }`}
+                            className={`flex min-h-[48px] flex-1 items-center justify-between rounded-xl border px-3 py-3 text-left ${
+                              selected
+                                ? "border-slate-900 bg-slate-900 text-white"
+                                : "border-slate-300 bg-white text-slate-700"
+                            }`}
                           >
                             <span>
-                              {user.full_name || user.email}
+                              {user.full_name ||
+                                user.email}
                             </span>
 
                             <span>
-                              {selected ? "✓" : "○"}
+                              {selected ? "✓" : "+"}
                             </span>
                           </button>
-                        );
-                      })}
-                    </div>
-                  </div>
 
-                  {sharedExpenseUsers.length > 0 && (
-                    <>
-                      <div>
-                        <p className="font-semibold text-slate-900 mb-2">
-                          ¿Cómo dividir?
-                        </p>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            onClick={() =>
-                              setSharedExpenseMode("equal")
-                            }
-                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "equal"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
-                              }`}
-                          >
-                            Partes iguales
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              setSharedExpenseMode("custom")
-                            }
-                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "custom"
-                                ? "bg-slate-900 text-white"
-                                : "bg-slate-100 text-slate-700"
-                              }`}
-                          >
-                            Cantidades
-                          </button>
-                        </div>
-                      </div>
-
-                      {sharedExpenseMode === "custom" && (
-                        <div className="space-y-2">
-                          {sharedExpenseUsers.map((userId) => (
-                            <div
-                              key={userId}
-                              className="flex items-center gap-2"
-                            >
-                              <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900">
-                                {obtenerNombre(userId)}
-                              </div>
-
+                          {selected &&
+                            sharedExpenseMode ===
+                              "custom" && (
                               <input
                                 type="number"
                                 inputMode="decimal"
-                                placeholder="$"
+                                min="0"
+                                step="0.01"
                                 value={
-                                  sharedCustomAmounts[userId] || ""
+                                  sharedExpenseAmounts[
+                                    user.id
+                                  ] || ""
                                 }
                                 onChange={(event) =>
-                                  setSharedCustomAmounts(
+                                  setSharedExpenseAmounts(
                                     (current) => ({
                                       ...current,
-                                      [userId]:
+                                      [user.id]:
                                         event.target.value,
                                     })
                                   )
                                 }
-                                className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                                placeholder="$"
+                                className="w-24 rounded-xl border border-slate-300 px-2 py-3 text-sm"
                               />
-                            </div>
-                          ))}
+                            )}
                         </div>
-                      )}
-
-                      <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                        <p className="text-sm text-slate-700">
-                          Tu parte
-                        </p>
-
-                        <p className="text-xl font-bold text-slate-900">
-                          {formatearMonto(
-                            obtenerCantidadDelCreador()
-                          )}
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={crearGastoCompartido}
-                        disabled={sharedExpenseLoading}
-                        className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
-                      >
-                        {sharedExpenseLoading
-                          ? "Creando..."
-                          : "Crear gasto compartido"}
-                      </button>
-                    </>
-                  )}
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
+
+                {sharedExpenseUsers.length > 0 && (
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-sm text-slate-600">
+                      Tu parte
+                    </p>
+
+                    <p className="text-xl font-bold text-slate-900">
+                      {money(obtenerCantidadDelCreador())}
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={crearGastoCompartido}
+                  className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
+                >
+                  Crear gasto
+                </button>
+              </div>
             </section>
 
-            {gastosPendientes.length > 0 && (
+            {/* SOLICITUDES DE GASTOS */}
+            {gastosPorConfirmar.length > 0 && (
               <section>
-                <h2 className="text-lg font-bold text-slate-900 mb-3">
-                  Gastos por confirmar
+                <h2 className="mb-3 text-lg font-bold text-slate-900">
+                  Gastos por aceptar
                 </h2>
 
                 <div className="space-y-3">
-                  {gastosPendientes.map((expense) => {
+                  {gastosPorConfirmar.map((expense) => {
                     const participant =
                       sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
+                        (p) =>
+                          p.expense_id === expense.id &&
+                          p.user_id === currentUserId
                       );
 
+                    const creator = getProfile(
+                      expense.created_by
+                    );
+
                     return (
-                      <div
+                      <article
                         key={expense.id}
-                        className="bg-white rounded-3xl border border-amber-200 p-5"
+                        className="rounded-2xl border border-amber-200 bg-amber-50 p-4"
                       >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
+                        <p className="text-lg font-bold text-slate-900">
+                          {expense.title}
+                        </p>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Pagado por{" "}
-                              {obtenerNombre(
-                                expense.created_by
-                              )}
-                            </p>
-                          </div>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Creado por{" "}
+                          {creator?.full_name ||
+                            "Otra persona"}
+                        </p>
 
-                          <p className="font-bold text-slate-900">
-                            {formatearMonto(
-                              participant?.amount || 0
-                            )}
-                          </p>
-                        </div>
+                        <p className="mt-3 text-2xl font-bold text-slate-900">
+                          {money(participant?.amount)}
+                        </p>
+
+                        <p className="text-sm text-slate-500">
+                          Tu parte
+                        </p>
 
                         {expense.description && (
-                          <p className="text-sm text-slate-700 mt-3">
+                          <p className="mt-2 text-sm text-slate-600">
                             {expense.description}
                           </p>
                         )}
 
-                        <div className="grid grid-cols-2 gap-2 mt-4">
+                        <div className="mt-4 grid grid-cols-2 gap-2">
                           <button
-                            onClick={() =>
-                              responderGastoCompartido(
-                                expense.id,
-                                true
-                              )
-                            }
-                            disabled={
-                              responseLoading === expense.id
-                            }
-                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
-                          >
-                            Confirmar
-                          </button>
-
-                          <button
+                            type="button"
+                            disabled={responseLoading}
                             onClick={() =>
                               responderGastoCompartido(
                                 expense.id,
                                 false
                               )
                             }
-                            disabled={
-                              responseLoading === expense.id
-                            }
-                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-3 font-semibold text-slate-700"
                           >
                             Rechazar
                           </button>
+
+                          <button
+                            type="button"
+                            disabled={responseLoading}
+                            onClick={() =>
+                              responderGastoCompartido(
+                                expense.id,
+                                true
+                              )
+                            }
+                            className="rounded-xl bg-slate-900 px-3 py-3 font-semibold text-white"
+                          >
+                            Aceptar
+                          </button>
                         </div>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
               </section>
             )}
 
+            {/* MIS GASTOS */}
             <section>
-              <h2 className="text-lg font-bold text-slate-900 mb-3">
+              <h2 className="mb-3 text-lg font-bold text-slate-900">
                 Mis gastos compartidos
               </h2>
 
-              {misGastosCompartidos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">
-                    Todavía no tienes gastos compartidos.
-                  </p>
+              {misGastos.length === 0 ? (
+                <div className="rounded-2xl bg-white p-5 text-center text-sm text-slate-500">
+                  No tienes gastos compartidos.
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {misGastosCompartidos.map((expense) => {
-                    const participant =
-                      sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
+                <div className="space-y-4">
+                  {misGastos.map((expense) => {
+                    const participants =
+                      sharedParticipants.filter(
+                        (participant) =>
+                          participant.expense_id ===
+                          expense.id
                       );
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
+                    const isCreator =
+                      expense.created_by ===
+                      currentUserId;
 
-                            <p className="text-sm text-slate-700 mt-1">
+                    return (
+                      <article
+                        key={expense.id}
+                        className="rounded-2xl bg-white p-4 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-900">
+                              {expense.title}
+                            </h3>
+
+                            <p className="text-sm text-slate-500">
                               Total:{" "}
-                              {formatearMonto(
-                                expense.total_amount
-                              )}
+                              {money(expense.total_amount)}
                             </p>
                           </div>
 
-                          {participant && (
-                            <p className="font-bold text-slate-900">
-                              {formatearMonto(
-                                participant.amount
-                              )}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="mt-3">
                           <span
-                            className={`inline-flex rounded-full px-3 py-1 ${participant?.accepted
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                              expense.status === "active"
                                 ? "bg-emerald-100 text-emerald-700"
+                                : expense.status ===
+                                  "cancelled"
+                                ? "bg-red-100 text-red-700"
                                 : "bg-amber-100 text-amber-700"
-                              }`}
+                            }`}
                           >
-                            {participant?.accepted
-                              ? "Confirmado"
+                            {expense.status === "active"
+                              ? "Activo"
+                              : expense.status ===
+                                "cancelled"
+                              ? "Cancelado"
                               : "Pendiente"}
                           </span>
                         </div>
-                      </div>
+
+                        {expense.description && (
+                          <p className="mt-2 text-sm text-slate-600">
+                            {expense.description}
+                          </p>
+                        )}
+
+                        <div className="mt-4 space-y-2">
+                          {participants.map(
+                            (participant) => {
+                              const person = getProfile(
+                                participant.user_id
+                              );
+
+                              const isMe =
+                                participant.user_id ===
+                                currentUserId;
+
+                              const canPay =
+                                isMe &&
+                                participant.accepted &&
+                                !participant.paid;
+
+                              const canConfirm =
+                                isCreator &&
+                                participant.paid &&
+                                !participant.payment_confirmed;
+
+                              return (
+                                <div
+                                  key={participant.id}
+                                  className="rounded-xl border border-slate-200 p-3"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="font-semibold text-slate-900">
+                                        {isMe
+                                          ? "Tú"
+                                          : person?.full_name ||
+                                            person?.email ||
+                                            "Participante"}
+                                      </p>
+
+                                      <p className="text-sm text-slate-500">
+                                        Debe{" "}
+                                        {money(
+                                          participant.amount
+                                        )}
+                                      </p>
+                                    </div>
+
+                                    <div className="text-right">
+                                      {!participant.accepted ? (
+                                        <span className="text-xs font-semibold text-amber-600">
+                                          Pendiente
+                                        </span>
+                                      ) : !participant.paid ? (
+                                        <span className="text-xs font-semibold text-slate-500">
+                                          No ha pagado
+                                        </span>
+                                      ) : participant.payment_confirmed ? (
+                                        <span className="text-xs font-semibold text-emerald-600">
+                                          Pago confirmado
+                                        </span>
+                                      ) : (
+                                        <span className="text-xs font-semibold text-blue-600">
+                                          Pago por confirmar
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {participant.payment_at && (
+                                    <p className="mt-2 text-xs text-slate-500">
+                                      Pagó:{" "}
+                                      {dateText(
+                                        participant.payment_at
+                                      )}
+                                    </p>
+                                  )}
+
+                                  {participant.payment_amount && (
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Pagó{" "}
+                                      {money(
+                                        participant.payment_amount
+                                      )}
+                                    </p>
+                                  )}
+
+                                  {canPay && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        abrirPagoGasto(
+                                          participant
+                                        )
+                                      }
+                                      className="mt-3 w-full rounded-xl bg-slate-900 px-3 py-3 text-sm font-semibold text-white"
+                                    >
+                                      Registrar pago
+                                    </button>
+                                  )}
+
+                                  {participant.payment_evidence_url && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        verComprobanteGasto(
+                                          participant.payment_evidence_url!
+                                        )
+                                      }
+                                      className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-700"
+                                    >
+                                      Ver comprobante
+                                    </button>
+                                  )}
+
+                                  {canConfirm && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        confirmarPagoGasto(
+                                          participant.id
+                                        )
+                                      }
+                                      className="mt-2 w-full rounded-xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white"
+                                    >
+                                      Confirmar pago
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                          )}
+                        </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -1773,201 +1705,101 @@ export default function Home() {
           </div>
         )}
 
-        {/* =====================================================
-            HISTORIAL
-        ===================================================== */}
+        {/* ================================================= */}
+        {/* HISTORIAL */}
+        {/* ================================================= */}
 
         {activeTab === "historial" && (
-          <div className="space-y-6">
+          <div className="space-y-5">
             <section>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">
+              <h2 className="mb-3 text-lg font-bold text-slate-900">
                 Historial de préstamos
               </h2>
 
               {historialPrestamos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">
-                    No hay préstamos en el historial.
-                  </p>
+                <div className="rounded-2xl bg-white p-5 text-center text-sm text-slate-500">
+                  Todavía no tienes movimientos en el historial.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {historialPrestamos.map((loan) => {
-                    const payment = payments.find(
-                      (item) => item.loan_id === loan.id
+                    const payment = getLoanPayment(
+                      loan.id
                     );
 
+                    const otherUserId =
+                      loan.lender_id === currentUserId
+                        ? loan.borrower_id
+                        : loan.lender_id;
+
+                    const other = getProfile(otherUserId);
+
                     return (
-                      <div
+                      <article
                         key={loan.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
+                        className="rounded-2xl bg-white p-4 shadow-sm"
                       >
-                        <div className="flex justify-between gap-4">
+                        <div className="flex items-start justify-between">
                           <div>
-                            <p className="font-semibold text-slate-900">
-                              {loan.lender_id === currentUserId
-                                ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
-                                : `Te prestó ${obtenerNombre(
-                                  loan.lender_id
-                                )}`}
+                            <p className="text-lg font-bold text-slate-900">
+                              {money(loan.amount)}
                             </p>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              {loan.description || "Préstamo"}
+                            <p className="text-sm text-slate-600">
+                              {other?.full_name ||
+                                "Otra persona"}
                             </p>
                           </div>
 
-                          <p className="font-bold text-slate-900 whitespace-nowrap">
-                            {formatearMonto(loan.amount)}
-                          </p>
-                        </div>
-
-                        <div className="mt-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status === "completed"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : loan.status === "rejected"
-                                  ? "bg-red-100 text-red-700"
-                                  : "bg-slate-100 text-slate-700"
-                              }`}
-                          >
-                            {loan.status === "completed"
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {loan.status ===
+                            "completed"
                               ? "Completado"
-                              : loan.status === "rejected"
-                                ? "Rechazado"
-                                : "Cancelado"}
+                              : loan.status ===
+                                "rejected"
+                              ? "Rechazado"
+                              : "Cancelado"}
                           </span>
                         </div>
 
-                        <div className="mt-4 text-sm text-slate-700 space-y-1">
-                          <p>
-                            Registrado:{" "}
-                            {formatearFecha(loan.created_at)}
+                        {loan.description && (
+                          <p className="mt-2 text-sm text-slate-600">
+                            {loan.description}
                           </p>
-
-                          <p>
-                            Fecha límite:{" "}
-                            {formatearFecha(loan.due_date)}
-                          </p>
-                        </div>
+                        )}
 
                         {payment && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="font-semibold text-slate-900">
-                              Información del pago
+                          <div className="mt-4 rounded-xl bg-slate-50 p-3">
+                            <p className="text-sm font-semibold text-slate-800">
+                              Pago registrado
                             </p>
 
-                            <div className="mt-2 text-sm text-slate-700 space-y-1">
-                              <p>
-                                Pagado por:{" "}
-                                {obtenerNombre(payment.paid_by)}
-                              </p>
+                            <p className="mt-1 text-sm text-slate-600">
+                              {money(payment.amount)}
+                            </p>
 
-                              <p>
-                                Monto pagado:{" "}
-                                {formatearMonto(payment.amount)}
-                              </p>
-
-                              <p>
-                                Fecha del pago:{" "}
-                                {formatearFechaHora(
-                                  payment.created_at
-                                )}
-                              </p>
-
-                              <p>
-                                Recepción:{" "}
-                                {payment.receiver_confirmed
-                                  ? "Confirmada"
-                                  : "Pendiente"}
-                              </p>
-                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {dateText(
+                                payment.created_at
+                              )}
+                            </p>
 
                             {payment.evidence_url && (
                               <button
+                                type="button"
                                 onClick={() =>
                                   verComprobante(
-                                    payment.evidence_url
+                                    payment.evidence_url!
                                   )
                                 }
-                                className="w-full mt-4 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                                className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-700"
                               >
                                 Ver comprobante
                               </button>
                             )}
                           </div>
                         )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">
-                Historial de gastos
-              </h2>
-
-              {historialGastos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">
-                    No hay gastos terminados.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {historialGastos.map((expense) => {
-                    const participant =
-                      sharedParticipants.find(
-                        (item) =>
-                          item.expense_id === expense.id &&
-                          item.user_id === currentUserId
-                      );
-
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              Total{" "}
-                              {formatearMonto(
-                                expense.total_amount
-                              )}
-                            </p>
-                          </div>
-
-                          {participant && (
-                            <p className="font-bold text-slate-900">
-                              {formatearMonto(
-                                participant.amount
-                              )}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="mt-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${expense.status === "completed"
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-red-100 text-red-700"
-                              }`}
-                          >
-                            {expense.status === "completed"
-                              ? "Completado"
-                              : "Cancelado"}
-                          </span>
-                        </div>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -1977,197 +1809,179 @@ export default function Home() {
         )}
       </div>
 
-      {/* =====================================================
-          NAVEGACIÓN
-      ===================================================== */}
+      {/* ================================================= */}
+      {/* MODAL PAGO PRÉSTAMO */}
+      {/* ================================================= */}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200">
-        <div className="max-w-xl mx-auto grid grid-cols-3">
-          <button
-            onClick={() => setActiveTab("prestamos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "prestamos"
-                ? "text-slate-900"
-                : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">💸</div>
-            Préstamos
-          </button>
+      {paymentLoan && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-900">
+                Registrar pago
+              </h2>
 
-          <button
-            onClick={() => setActiveTab("gastos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "gastos"
-                ? "text-slate-900"
-                : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">🍽️</div>
-            Gastos
-          </button>
-
-          <button
-            onClick={() => setActiveTab("historial")}
-            className={`py-4 text-sm font-semibold ${activeTab === "historial"
-                ? "text-slate-900"
-                : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">📋</div>
-            Historial
-          </button>
-        </div>
-      </nav>
-
-      {/* =====================================================
-          MODAL GENERAL
-      ===================================================== */}
-
-      {modal && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
-            <div
-              className={`text-3xl mb-3 ${modal.type === "success"
-                  ? "text-emerald-600"
-                  : modal.type === "error"
-                    ? "text-red-600"
-                    : "text-slate-700"
-                }`}
-            >
-              {modal.type === "success"
-                ? "✓"
-                : modal.type === "error"
-                  ? "!"
-                  : "i"}
+              <button
+                type="button"
+                onClick={cerrarRegistroPago}
+                className="rounded-lg px-3 py-2 text-slate-500"
+              >
+                ✕
+              </button>
             </div>
 
-            <h3 className="text-xl font-bold text-slate-900">
-              {modal.title}
-            </h3>
+            <div className="space-y-3">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={paymentAmount}
+                onChange={(event) =>
+                  setPaymentAmount(event.target.value)
+                }
+                placeholder="Cantidad pagada"
+                className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
+              />
 
-            <p className="text-slate-700 mt-2">
-              {modal.message}
-            </p>
+              <div>
+                <label
+                  htmlFor="payment-file"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Comprobante
+                </label>
 
-            <button
-              onClick={cerrarModal}
-              className="w-full mt-5 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-            >
-              Entendido
-            </button>
+                <input
+                  id="payment-file"
+                  type="file"
+                  accept="image/*,.heic,.heif,.pdf"
+                  multiple={false}
+                  onChange={seleccionarComprobante}
+                  className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
+                />
+
+                {paymentFile && (
+                  <p className="mt-2 break-all text-xs text-slate-500">
+                    Archivo: {paymentFile.name}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={registrarPago}
+                className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
+              >
+                Enviar pago
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* =====================================================
-          MODAL REGISTRAR PAGO
-      ===================================================== */}
+      {/* ================================================= */}
+      {/* MODAL PAGO GASTO */}
+      {/* ================================================= */}
 
-      {paymentLoan && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold text-slate-900">
-              Registrar pago
-            </h3>
+      {sharedPaymentParticipant && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Registrar pago
+                </h2>
 
-            <p className="text-sm text-slate-700 mt-1">
-              Pago de {formatearMonto(paymentLoan.amount)} a{" "}
-              {obtenerNombre(paymentLoan.lender_id)}
-            </p>
+                <p className="text-sm text-slate-500">
+                  Tu parte:{" "}
+                  {money(sharedPaymentParticipant.amount)}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={cerrarPagoGasto}
+                className="rounded-lg px-3 py-2 text-slate-500"
+              >
+                ✕
+              </button>
+            </div>
 
             <div className="space-y-3">
-              <label className="block text-sm font-medium text-slate-700">
-                Comprobante del pago
-              </label>
-
-              <label
-                htmlFor="payment-file"
-                className="flex min-h-[52px] w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-center text-sm font-medium text-slate-700 active:bg-slate-100"
-              >
-                📎 Seleccionar comprobante
-              </label>
-
               <input
-                id="payment-file"
-                type="file"
-                accept="image/*,.heic,.heif,.pdf"
-                multiple={false}
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  setPaymentFile(file);
-                }}
-                className="sr-only"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={sharedPaymentAmount}
+                onChange={(event) =>
+                  setSharedPaymentAmount(
+                    event.target.value
+                  )
+                }
+                placeholder="Cantidad pagada"
+                className="w-full rounded-xl border border-slate-300 px-3 py-3 text-base"
               />
 
-              {paymentFile ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                  <div className="flex items-start gap-3">
-                    <div className="text-2xl">
-                      {paymentFile.type.startsWith("image/")
-                        ? "🖼️"
-                        : paymentFile.type === "application/pdf"
-                          ? "📄"
-                          : "📎"}
-                    </div>
+              <div>
+                <label
+                  htmlFor="shared-payment-file"
+                  className="mb-2 block text-sm font-semibold text-slate-700"
+                >
+                  Comprobante
+                </label>
 
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-emerald-900">
-                        Archivo seleccionado
-                      </p>
+                <input
+                  id="shared-payment-file"
+                  type="file"
+                  accept="image/*,.heic,.heif,.pdf"
+                  multiple={false}
+                  onChange={seleccionarComprobanteGasto}
+                  className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
+                />
 
-                      <p className="mt-1 break-all text-sm text-emerald-800">
-                        {paymentFile.name}
-                      </p>
-
-                      <p className="mt-1 text-xs text-emerald-700">
-                        {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentFile(null);
-
-                        const input = document.getElementById(
-                          "payment-file"
-                        ) as HTMLInputElement | null;
-
-                        if (input) {
-                          input.value = "";
-                        }
-                      }}
-                      className="min-h-[40px] min-w-[40px] rounded-lg bg-white px-3 text-sm font-semibold text-red-600 shadow-sm"
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500">
-                  Puedes seleccionar una foto desde tu galería, tomar una foto o elegir un PDF.
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 mt-6">
-              <button
-                onClick={cerrarRegistroPago}
-                disabled={paymentSending}
-                className="rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
-              >
-                Cancelar
-              </button>
+                {sharedPaymentFile && (
+                  <p className="mt-2 break-all text-xs text-slate-500">
+                    Archivo: {sharedPaymentFile.name}
+                  </p>
+                )}
+              </div>
 
               <button
-                onClick={registrarPago}
-                disabled={paymentSending}
-                className="rounded-2xl bg-slate-900 text-white py-3 font-semibold disabled:opacity-50"
+                type="button"
+                onClick={registrarPagoGasto}
+                className="w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
               >
-                {paymentSending
-                  ? "Guardando..."
-                  : "Registrar pago"}
+                Enviar pago
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================= */}
+      {/* MODAL GENERAL */}
+      {/* ================================================= */}
+
+      {modal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5">
+            <h2 className="text-lg font-bold text-slate-900">
+              {modal.title}
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {modal.message}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setModal(null)}
+              className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white"
+            >
+              Entendido
+            </button>
           </div>
         </div>
       )}
