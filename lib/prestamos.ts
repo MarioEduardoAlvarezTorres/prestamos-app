@@ -1,6 +1,6 @@
 import { createClient } from "./supabase";
 
-export async function solicitarPrestamo(params: {
+export async function registrarPrestamo(params: {
   borrowerId: string;
   amount: number;
   description: string;
@@ -16,6 +16,10 @@ export async function solicitarPrestamo(params: {
     throw new Error("No hay una sesión activa.");
   }
 
+  if (params.borrowerId === session.user.id) {
+    throw new Error("No puedes registrarte un préstamo a ti mismo.");
+  }
+
   const { data, error } = await supabase
     .from("loans")
     .insert({
@@ -29,10 +33,10 @@ export async function solicitarPrestamo(params: {
     .select()
     .single();
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
+  // El prestamista registra el préstamo.
+  // El deudor será quien deba confirmarlo.
   const { error: acceptanceError } = await supabase
     .from("loan_acceptances")
     .insert({
@@ -42,9 +46,7 @@ export async function solicitarPrestamo(params: {
       accepted_at: new Date().toISOString(),
     });
 
-  if (acceptanceError) {
-    throw acceptanceError;
-  }
+  if (acceptanceError) throw acceptanceError;
 
   return data;
 }
@@ -63,14 +65,10 @@ export async function responderSolicitud(
     }
   );
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 }
 
-export async function confirmarRecepcion(
-  loanId: string
-) {
+export async function confirmarRecepcion(loanId: string) {
   const supabase = createClient();
 
   const { error } = await supabase.rpc(
@@ -80,9 +78,7 @@ export async function confirmarRecepcion(
     }
   );
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 }
 
 export async function registrarPago(params: {
@@ -102,18 +98,14 @@ export async function registrarPago(params: {
 
   const filePath = `${params.userId}/${params.loanId}-${Date.now()}.${extension}`;
 
-  // Subir comprobante
   const { error: uploadError } = await supabase.storage
     .from("payment-evidence")
     .upload(filePath, params.file, {
       upsert: false,
     });
 
-  if (uploadError) {
-    throw uploadError;
-  }
+  if (uploadError) throw uploadError;
 
-  // Registrar pago
   const { error: paymentError } = await supabase
     .from("loan_payments")
     .insert({
@@ -126,7 +118,6 @@ export async function registrarPago(params: {
     });
 
   if (paymentError) {
-    // Si falla la BD, intentamos borrar el archivo que acabamos de subir.
     await supabase.storage
       .from("payment-evidence")
       .remove([filePath]);
@@ -134,7 +125,6 @@ export async function registrarPago(params: {
     throw paymentError;
   }
 
-  // Cambiar el préstamo a pendiente de confirmación
   const { error: loanError } = await supabase
     .from("loans")
     .update({
@@ -143,27 +133,21 @@ export async function registrarPago(params: {
     })
     .eq("id", params.loanId);
 
-  if (loanError) {
-    throw loanError;
-  }
+  if (loanError) throw loanError;
 
   return {
     evidencePath: filePath,
   };
 }
 
-export async function verComprobante(
-  path: string
-) {
+export async function verComprobante(path: string) {
   const supabase = createClient();
 
   const { data, error } = await supabase.storage
     .from("payment-evidence")
     .createSignedUrl(path, 60 * 10);
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   return data.signedUrl;
 }
