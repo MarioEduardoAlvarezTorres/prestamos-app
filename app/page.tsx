@@ -33,12 +33,12 @@ type Loan = {
   description: string | null;
   due_date: string | null;
   status:
-    | "pending"
-    | "active"
-    | "payment_pending"
-    | "completed"
-    | "rejected"
-    | "cancelled";
+  | "pending"
+  | "active"
+  | "payment_pending"
+  | "completed"
+  | "rejected"
+  | "cancelled";
   created_at: string;
   updated_at: string;
 };
@@ -490,7 +490,7 @@ export default function Home() {
       mostrarModal(
         "No se pudo registrar",
         error?.message ||
-          "Ocurrió un error registrando el préstamo.",
+        "Ocurrió un error registrando el préstamo.",
         "error"
       );
     } finally {
@@ -1248,11 +1248,11 @@ export default function Home() {
                             <p className="font-semibold text-slate-900">
                               {soyPrestamista
                                 ? `Le prestaste a ${obtenerNombre(
-                                    loan.borrower_id
-                                  )}`
+                                  loan.borrower_id
+                                )}`
                                 : `Te prestó ${obtenerNombre(
-                                    loan.lender_id
-                                  )}`}
+                                  loan.lender_id
+                                )}`}
                             </p>
 
                             <p className="text-sm text-slate-700 mt-1">
@@ -1505,11 +1505,10 @@ export default function Home() {
                             onClick={() =>
                               toggleSharedExpenseUser(user.id)
                             }
-                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${
-                              selected
+                            className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left text-slate-900 ${selected
                                 ? "border-slate-900 bg-slate-100"
                                 : "border-slate-200 bg-white"
-                            }`}
+                              }`}
                           >
                             <span>
                               {user.full_name || user.email}
@@ -1536,11 +1535,10 @@ export default function Home() {
                             onClick={() =>
                               setSharedExpenseMode("equal")
                             }
-                            className={`rounded-2xl py-3 font-semibold ${
-                              sharedExpenseMode === "equal"
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "equal"
                                 ? "bg-slate-900 text-white"
                                 : "bg-slate-100 text-slate-700"
-                            }`}
+                              }`}
                           >
                             Partes iguales
                           </button>
@@ -1549,11 +1547,10 @@ export default function Home() {
                             onClick={() =>
                               setSharedExpenseMode("custom")
                             }
-                            className={`rounded-2xl py-3 font-semibold ${
-                              sharedExpenseMode === "custom"
+                            className={`rounded-2xl py-3 font-semibold ${sharedExpenseMode === "custom"
                                 ? "bg-slate-900 text-white"
                                 : "bg-slate-100 text-slate-700"
-                            }`}
+                              }`}
                           >
                             Cantidades
                           </button>
@@ -1757,11 +1754,10 @@ export default function Home() {
 
                         <div className="mt-3">
                           <span
-                            className={`inline-flex rounded-full px-3 py-1 ${
-                              participant?.accepted
+                            className={`inline-flex rounded-full px-3 py-1 ${participant?.accepted
                                 ? "bg-emerald-100 text-emerald-700"
                                 : "bg-amber-100 text-amber-700"
-                            }`}
+                              }`}
                           >
                             {participant?.accepted
                               ? "Confirmado"
@@ -1811,11 +1807,11 @@ export default function Home() {
                             <p className="font-semibold text-slate-900">
                               {loan.lender_id === currentUserId
                                 ? `Le prestaste a ${obtenerNombre(
-                                    loan.borrower_id
-                                  )}`
+                                  loan.borrower_id
+                                )}`
                                 : `Te prestó ${obtenerNombre(
-                                    loan.lender_id
-                                  )}`}
+                                  loan.lender_id
+                                )}`}
                             </p>
 
                             <p className="text-sm text-slate-700 mt-1">
@@ -1830,19 +1826,18 @@ export default function Home() {
 
                         <div className="mt-3">
                           <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${
-                              loan.status === "completed"
+                            className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status === "completed"
                                 ? "bg-emerald-100 text-emerald-700"
                                 : loan.status === "rejected"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-slate-100 text-slate-700"
-                            }`}
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
                           >
                             {loan.status === "completed"
                               ? "Completado"
                               : loan.status === "rejected"
-                              ? "Rechazado"
-                              : "Cancelado"}
+                                ? "Rechazado"
+                                : "Cancelado"}
                           </span>
                         </div>
 
@@ -1962,11 +1957,10 @@ export default function Home() {
 
                         <div className="mt-3">
                           <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${
-                              expense.status === "completed"
+                            className={`inline-flex rounded-full px-3 py-1 text-sm ${expense.status === "completed"
                                 ? "bg-emerald-100 text-emerald-700"
                                 : "bg-red-100 text-red-700"
-                            }`}
+                              }`}
                           >
                             {expense.status === "completed"
                               ? "Completado"
@@ -1991,11 +1985,10 @@ export default function Home() {
         <div className="max-w-xl mx-auto grid grid-cols-3">
           <button
             onClick={() => setActiveTab("prestamos")}
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "prestamos"
+            className={`py-4 text-sm font-semibold ${activeTab === "prestamos"
                 ? "text-slate-900"
                 : "text-slate-500"
-            }`}
+              }`}
           >
             <div className="text-xl">💸</div>
             Préstamos
@@ -2003,11 +1996,10 @@ export default function Home() {
 
           <button
             onClick={() => setActiveTab("gastos")}
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "gastos"
+            className={`py-4 text-sm font-semibold ${activeTab === "gastos"
                 ? "text-slate-900"
                 : "text-slate-500"
-            }`}
+              }`}
           >
             <div className="text-xl">🍽️</div>
             Gastos
@@ -2015,11 +2007,10 @@ export default function Home() {
 
           <button
             onClick={() => setActiveTab("historial")}
-            className={`py-4 text-sm font-semibold ${
-              activeTab === "historial"
+            className={`py-4 text-sm font-semibold ${activeTab === "historial"
                 ? "text-slate-900"
                 : "text-slate-500"
-            }`}
+              }`}
           >
             <div className="text-xl">📋</div>
             Historial
@@ -2035,19 +2026,18 @@ export default function Home() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-5">
           <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
             <div
-              className={`text-3xl mb-3 ${
-                modal.type === "success"
+              className={`text-3xl mb-3 ${modal.type === "success"
                   ? "text-emerald-600"
                   : modal.type === "error"
-                  ? "text-red-600"
-                  : "text-slate-700"
-              }`}
+                    ? "text-red-600"
+                    : "text-slate-700"
+                }`}
             >
               {modal.type === "success"
                 ? "✓"
                 : modal.type === "error"
-                ? "!"
-                : "i"}
+                  ? "!"
+                  : "i"}
             </div>
 
             <h3 className="text-xl font-bold text-slate-900">
@@ -2084,54 +2074,78 @@ export default function Home() {
               {obtenerNombre(paymentLoan.lender_id)}
             </p>
 
-            <div className="space-y-3 mt-5">
-              <input
-                type="number"
-                inputMode="decimal"
-                value={paymentAmount}
-                onChange={(event) =>
-                  setPaymentAmount(event.target.value)
-                }
-                placeholder="Monto pagado"
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
-              />
-
-              <label className="block">
-                <span className="block text-sm font-semibold text-slate-700 mb-2">
-                  Comprobante
-                </span>
-
-                <input
-                  type="file"
-                  accept="image/*,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf"
-                  onChange={seleccionarComprobante}
-                  className="block w-full text-sm text-slate-900 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-900 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white"
-                />
-
-                <p className="text-xs text-slate-500 mt-2">
-                  Puedes seleccionar una foto, imagen o PDF. Máximo 10 MB.
-                </p>
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Comprobante del pago
               </label>
 
-              {paymentFile && (
-                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                  <p className="text-sm font-semibold text-slate-900 break-all">
-                    {paymentFile.name}
-                  </p>
+              <label
+                htmlFor="payment-file"
+                className="flex min-h-[52px] w-full cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-center text-sm font-medium text-slate-700 active:bg-slate-100"
+              >
+                📎 Seleccionar comprobante
+              </label>
 
-                  <p className="text-xs text-slate-500 mt-1">
-                    {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
+              <input
+                id="payment-file"
+                type="file"
+                accept="image/*,.heic,.heif,.pdf"
+                multiple={false}
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setPaymentFile(file);
+                }}
+                className="sr-only"
+              />
 
-                  <button
-                    type="button"
-                    onClick={() => setPaymentFile(null)}
-                    disabled={paymentSending}
-                    className="mt-3 text-sm font-semibold text-red-600"
-                  >
-                    Quitar comprobante
-                  </button>
+              {paymentFile ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-start gap-3">
+                    <div className="text-2xl">
+                      {paymentFile.type.startsWith("image/")
+                        ? "🖼️"
+                        : paymentFile.type === "application/pdf"
+                          ? "📄"
+                          : "📎"}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        Archivo seleccionado
+                      </p>
+
+                      <p className="mt-1 break-all text-sm text-emerald-800">
+                        {paymentFile.name}
+                      </p>
+
+                      <p className="mt-1 text-xs text-emerald-700">
+                        {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentFile(null);
+
+                        const input = document.getElementById(
+                          "payment-file"
+                        ) as HTMLInputElement | null;
+
+                        if (input) {
+                          input.value = "";
+                        }
+                      }}
+                      className="min-h-[40px] min-w-[40px] rounded-lg bg-white px-3 text-sm font-semibold text-red-600 shadow-sm"
+                    >
+                      Quitar
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Puedes seleccionar una foto desde tu galería, tomar una foto o elegir un PDF.
+                </p>
               )}
             </div>
 
