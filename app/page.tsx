@@ -84,6 +84,7 @@ type ModalData = {
 const supabase = createClient();
 
 export default function Home() {
+  console.log("PAGINA CARGADA");
 
   // =========================
   // SESIÓN
@@ -225,7 +226,11 @@ export default function Home() {
 
       const {
         data: { session },
+        error: sessionError,
       } = await supabase.auth.getSession();
+
+      console.log("SESSION:", session);
+      console.log("SESSION ERROR:", sessionError);
 
       if (!session) {
         setCurrentUserId(null);
@@ -336,36 +341,36 @@ export default function Home() {
   // =========================
 
   useEffect(() => {
-  loadData();
+    loadData();
 
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
-    console.log("AUTH EVENT:", _event);
-    console.log("AUTH SESSION:", session);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log("AUTH EVENT:", _event);
+      console.log("AUTH SESSION:", session);
 
-    if (session) {
-      setCurrentUserId(session.user.id);
-      setEmail(session.user.email || "");
+      if (session) {
+        setCurrentUserId(session.user.id);
+        setEmail(session.user.email || "");
 
-      setTimeout(() => {
-        loadData();
-      }, 0);
-    } else {
-      setCurrentUserId(null);
-      setEmail("");
-      setLoans([]);
-      setPayments([]);
-      setUsers([]);
-      setSharedExpenses([]);
-      setSharedParticipants([]);
-    }
-  });
+        setTimeout(() => {
+          loadData();
+        }, 0);
+      } else {
+        setCurrentUserId(null);
+        setEmail("");
+        setLoans([]);
+        setPayments([]);
+        setUsers([]);
+        setSharedExpenses([]);
+        setSharedParticipants([]);
+      }
+    });
 
-  return () => {
-    subscription.unsubscribe();
-  };
-}, []);
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     function handleBeforeInstallPrompt(event: Event) {
@@ -985,32 +990,37 @@ export default function Home() {
 
   if (!currentUserId) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-7">
-          <div className="text-center">
-            <div className="text-5xl mb-4">💸</div>
-
-            <h1 className="text-2xl font-bold text-slate-900">
-              Préstamos
-            </h1>
-
-            <p className="text-slate-500 mt-2">
-              Administra préstamos y gastos compartidos
-              entre tu grupo.
-            </p>
-          </div>
-
-          <button
-            onClick={loginWithGoogle}
-            disabled={loginLoading}
-            className="w-full mt-7 rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
-          >
-            {loginLoading
-              ? "Conectando..."
-              : "Continuar con Google"}
-          </button>
+      <>
+        <div className="fixed top-0 left-0 right-0 z-[9999] bg-red-600 text-white p-3 text-center text-sm">
+          DEBUG: Home cargó correctamente
         </div>
-      </main>
+        <main className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-7">
+            <div className="text-center">
+              <div className="text-5xl mb-4">💸</div>
+
+              <h1 className="text-2xl font-bold text-slate-900">
+                Préstamos
+              </h1>
+
+              <p className="text-slate-500 mt-2">
+                Administra préstamos y gastos compartidos
+                entre tu grupo.
+              </p>
+            </div>
+
+            <button
+              onClick={loginWithGoogle}
+              disabled={loginLoading}
+              className="w-full mt-7 rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
+            >
+              {loginLoading
+                ? "Conectando..."
+                : "Continuar con Google"}
+            </button>
+          </div>
+        </main>
+      </>
     );
   }
 
