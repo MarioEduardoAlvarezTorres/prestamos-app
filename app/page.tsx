@@ -165,6 +165,9 @@ export default function Home() {
     Record<string, string>
   >({});
 
+  // Parte que paga el creador cuando la división es personalizada
+  const [sharedCreatorAmount, setSharedCreatorAmount] = useState("");
+
   // Edición / eliminación de gastos
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(
     null
@@ -752,13 +755,29 @@ export default function Home() {
       return Number(sharedCustomAmounts[userId] || 0);
     }
 
-    const cantidadPersonas = sharedExpenseUsers.length;
+    const cantidadPersonas = sharedExpenseUsers.length + 1;
 
-    if (!total || cantidadPersonas <= 0) {
+    if (!total || cantidadPersonas <= 1) {
       return 0;
     }
 
-    return Math.round((total / cantidadPersonas) * 100) / 100;
+    // Los centavos que sobran por redondeo quedan en la parte del creador.
+    const parteInvitado = Math.floor((total / cantidadPersonas) * 100) / 100;
+
+    return Math.round(parteInvitado * 100) / 100;
+  }
+
+  function obtenerMiParteGasto(expense: SharedExpense) {
+    const participantes = sharedParticipants.filter(
+      (participant) => participant.expense_id === expense.id
+    );
+
+    const sumaParticipantes = participantes.reduce(
+      (sum, participant) => sum + Number(participant.amount),
+      0
+    );
+
+    return Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) / 100;
   }
 
   function limpiarFormularioGasto() {
@@ -769,6 +788,7 @@ export default function Home() {
     setSharedExpenseUsers([]);
     setSharedExpenseMode("equal");
     setSharedCustomAmounts({});
+    setSharedCreatorAmount("");
     setShowSharedExpenseForm(false);
   }
 
@@ -798,6 +818,17 @@ export default function Home() {
     setSharedExpenseTotal(String(expense.total_amount));
     setSharedExpenseUsers(participantes.map((participant) => participant.user_id));
     setSharedExpenseMode(todosIguales ? "equal" : "custom");
+
+    const sumaParticipantes = participantes.reduce(
+      (sum, participant) => sum + Number(participant.amount),
+      0
+    );
+
+    setSharedCreatorAmount(
+      String(
+        Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) / 100
+      )
+    );
     setSharedCustomAmounts(
       Object.fromEntries(
         participantes.map((participant) => [
@@ -837,7 +868,12 @@ export default function Home() {
       return;
     }
 
-    if (sharedExpenseMode === "custom") {
+    if (sharedExpenseMode === "equal") {
+      // La parte de los invitados se calcula en obtenerCantidadCompartida.
+      // El sobrante de centavos queda automáticamente en la parte del creador.
+    } else {
+      const creatorAmount = Number(sharedCreatorAmount || 0);
+
       const sumaOtros = sharedExpenseUsers.reduce(
         (sum, userId) => sum + Number(sharedCustomAmounts[userId] || 0),
         0
@@ -847,19 +883,19 @@ export default function Home() {
         (userId) => Number(sharedCustomAmounts[userId] || 0) <= 0
       );
 
-      if (cantidadesInvalidas) {
+      if (creatorAmount <= 0 || cantidadesInvalidas) {
         mostrarModal(
           "Faltan cantidades",
-          "Escribe cuánto debe pagar cada participante.",
+          "Escribe cuánto pagarás tú y cuánto pagará cada participante.",
           "error"
         );
         return;
       }
 
-      if (Math.abs(sumaOtros - total) > 0.01) {
+      if (Math.abs(creatorAmount + sumaOtros - total) > 0.01) {
         mostrarModal(
           "Montos inválidos",
-          "La suma de las cantidades de los participantes debe ser igual al total.",
+          "Tu parte más la de los participantes debe ser igual al total.",
           "error"
         );
         return;
@@ -1170,6 +1206,8 @@ export default function Home() {
 
   const gastosPendientes = sharedExpenses.filter((expense) => {
     if (!currentUserId) return false;
+
+    if (expense.status !== "pending") return false;
 
     return sharedParticipants.some(
       (participant) =>
@@ -1746,7 +1784,7 @@ export default function Home() {
                       {sharedExpenseMode === "equal" && (
                         <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
                           <p className="text-sm text-slate-600">
-                            Cada persona seleccionada debe pagar:
+                            Cada persona (incluyéndote) paga:
                           </p>
 
                           <p className="text-xl font-bold text-slate-900 mt-1">
@@ -1755,14 +1793,37 @@ export default function Home() {
                             )}
                           </p>
 
-                          <p className="text-xs text-slate-500 mt-1">
-                            Tú pagas el total por adelantado.
+                          <p className="text-sm text-slate-700 mt-2">
+                            Tu parte: {formatearMonto(
+                              Number(sharedExpenseTotal || 0) -
+                                obtenerCantidadCompartida(sharedExpenseUsers[0]) *
+                                  sharedExpenseUsers.length
+                            )}
                           </p>
                         </div>
                       )}
 
                       {sharedExpenseMode === "custom" && (
                         <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-slate-900 font-semibold">
+                              Tu parte (tú)
+                            </div>
+
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min="0"
+                              step="0.01"
+                              placeholder="$"
+                              value={sharedCreatorAmount}
+                              onChange={(event) =>
+                                setSharedCreatorAmount(event.target.value)
+                              }
+                              className="w-28 rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+                            />
+                          </div>
+
                           {sharedExpenseUsers.map((userId) => (
                             <div
                               key={userId}
@@ -2062,7 +2123,13 @@ export default function Home() {
                           <>
                             <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
                               <p className="text-sm text-slate-700">
-                                Tú pagaste el total de este gasto.
+                                Tu parte: <span className="font-bold text-slate-900">
+                                  {formatearMonto(obtenerMiParteGasto(expense))}
+                                </span>
+                              </p>
+
+                              <p className="text-sm text-slate-700 mt-1">
+                                Tú pagaste el total de este gasto por adelantado.
                               </p>
 
                               <p className="text-sm text-slate-700 mt-1">

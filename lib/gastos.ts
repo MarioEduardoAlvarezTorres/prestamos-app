@@ -1,28 +1,26 @@
 import { createClient } from "./supabase";
 
+type ParticipanteGasto = {
+  user_id: string;
+  amount: number;
+};
+
 export async function crearGastoCompartido(params: {
   title: string;
   description: string | null;
   totalAmount: number;
-  participants: {
-    user_id: string;
-    amount: number;
-  }[];
+  participants: ParticipanteGasto[];
 }) {
   const supabase = createClient();
 
-  const { data, error } = await supabase.rpc(
-    "crear_gasto_compartido",
-    {
-      p_title: params.title,
-      p_description: params.description,
-      p_total_amount: params.totalAmount,
-      p_participants: params.participants,
-    }
-  );
+  const { data, error } = await supabase.rpc("crear_gasto_compartido", {
+    p_title: params.title,
+    p_description: params.description,
+    p_total_amount: params.totalAmount,
+    p_participants: params.participants,
+  });
 
   if (error) throw error;
-
   return data;
 }
 
@@ -31,14 +29,11 @@ export async function editarGastoCompartido(params: {
   title: string;
   description: string | null;
   totalAmount: number;
-  participants: {
-    user_id: string;
-    amount: number;
-  }[];
+  participants: ParticipanteGasto[];
 }) {
   const supabase = createClient();
 
-  const { error } = await supabase.rpc("editar_gasto_compartido", {
+  const { data, error } = await supabase.rpc("editar_gasto_compartido", {
     p_expense_id: params.expenseId,
     p_title: params.title,
     p_description: params.description,
@@ -47,16 +42,18 @@ export async function editarGastoCompartido(params: {
   });
 
   if (error) throw error;
+  return data;
 }
 
 export async function eliminarGastoCompartido(expenseId: string) {
   const supabase = createClient();
 
-  const { error } = await supabase.rpc("eliminar_gasto_compartido", {
+  const { data, error } = await supabase.rpc("eliminar_gasto_compartido", {
     p_expense_id: expenseId,
   });
 
   if (error) throw error;
+  return data;
 }
 
 export async function responderGastoCompartido(
@@ -65,15 +62,13 @@ export async function responderGastoCompartido(
 ) {
   const supabase = createClient();
 
-  const { error } = await supabase.rpc(
-    "responder_gasto_compartido",
-    {
-      p_expense_id: expenseId,
-      p_aceptar: aceptar,
-    }
-  );
+  const { data, error } = await supabase.rpc("responder_gasto_compartido", {
+    p_expense_id: expenseId,
+    p_aceptar: aceptar,
+  });
 
   if (error) throw error;
+  return data;
 }
 
 export async function registrarPagoGastoCompartido(params: {
@@ -144,7 +139,7 @@ export async function confirmarPagoGastoCompartido(
 ) {
   const supabase = createClient();
 
-  const { error } = await supabase.rpc(
+  const { data, error } = await supabase.rpc(
     "confirmar_pago_gasto_compartido",
     {
       p_expense_id: expenseId,
@@ -153,6 +148,7 @@ export async function confirmarPagoGastoCompartido(
   );
 
   if (error) throw error;
+  return data;
 }
 
 export async function verComprobanteGastoCompartido(
