@@ -18,6 +18,7 @@ export default function Home() {
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -51,6 +52,25 @@ export default function Home() {
 
     loadData();
   }, []);
+
+  async function loginWithGoogle() {
+    setLoginLoading(true);
+
+    const supabase = createClient();
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
+
+    if (error) {
+      console.error(error);
+      alert(error.message);
+      setLoginLoading(false);
+    }
+  }
 
   async function solicitarPrestamo() {
     if (!selectedUser || !amount) {
@@ -130,8 +150,30 @@ export default function Home() {
 
   if (!email) {
     return (
-      <main className="min-h-screen flex items-center justify-center">
-        <p>No has iniciado sesión.</p>
+      <main className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+        <div className="w-full max-w-sm bg-white rounded-3xl shadow-lg p-8 text-center">
+          <div className="text-5xl mb-5">💰</div>
+
+          <h1 className="text-3xl font-bold text-slate-900">
+            Préstamos
+          </h1>
+
+          <p className="text-slate-500 mt-2 mb-8">
+            Administra tus préstamos de forma sencilla.
+          </p>
+
+          <button
+            onClick={loginWithGoogle}
+            disabled={loginLoading}
+            className="w-full rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
+          >
+            {loginLoading ? "Conectando..." : "Continuar con Google"}
+          </button>
+
+          <p className="text-xs text-slate-400 mt-6">
+            Acceso exclusivo para usuarios autorizados.
+          </p>
+        </div>
       </main>
     );
   }
