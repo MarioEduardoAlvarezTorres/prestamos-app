@@ -336,33 +336,36 @@ export default function Home() {
   // =========================
 
   useEffect(() => {
-    loadData();
+  loadData();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setCurrentUserId(session.user.id);
-        setEmail(session.user.email || "");
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    console.log("AUTH EVENT:", _event);
+    console.log("AUTH SESSION:", session);
 
-        setTimeout(() => {
-          loadData();
-        }, 0);
-      } else {
-        setCurrentUserId(null);
-        setEmail("");
-        setLoans([]);
-        setPayments([]);
-        setUsers([]);
-        setSharedExpenses([]);
-        setSharedParticipants([]);
-      }
-    });
+    if (session) {
+      setCurrentUserId(session.user.id);
+      setEmail(session.user.email || "");
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
+      setTimeout(() => {
+        loadData();
+      }, 0);
+    } else {
+      setCurrentUserId(null);
+      setEmail("");
+      setLoans([]);
+      setPayments([]);
+      setUsers([]);
+      setSharedExpenses([]);
+      setSharedParticipants([]);
+    }
+  });
+
+  return () => {
+    subscription.unsubscribe();
+  };
+}, []);
 
   useEffect(() => {
     function handleBeforeInstallPrompt(event: Event) {
