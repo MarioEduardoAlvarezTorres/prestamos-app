@@ -29,7 +29,6 @@ type Payment = {
   evidence_url: string | null;
   payer_confirmed: boolean;
   receiver_confirmed: boolean;
-  created_at: string;
 };
 
 export default function Home() {
@@ -41,7 +40,6 @@ export default function Home() {
   const [payments, setPayments] = useState<Payment[]>([]);
 
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
-
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
 
@@ -53,15 +51,14 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [paymentSending, setPaymentSending] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
-
-  const supabase = createClient();
+  const [responseLoading, setResponseLoading] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   async function loadData() {
-    setLoading(true);
+    const supabase = createClient();
 
     const {
       data: { session },
@@ -72,49 +69,48 @@ export default function Home() {
       return;
     }
 
-    const userId = session.user.id;
-
-    setCurrentUserId(userId);
     setEmail(session.user.email ?? null);
+    setCurrentUserId(session.user.id);
 
-    const { data: usersData, error: usersError } = await supabase
+    const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, full_name, email, avatar_url")
       .eq("is_active", true)
-      .neq("id", userId);
+      .neq("id", session.user.id);
 
-    if (usersError) {
-      console.error("Error cargando usuarios:", usersError);
+    if (profilesError) {
+      console.error(profilesError);
     } else {
-      setUsers(usersData ?? []);
+      setUsers(profiles ?? []);
     }
 
-    const { data: loansData, error: loansError } = await supabase
+    const { data: loanData, error: loansError } = await supabase
       .from("loans")
       .select(
         "id, lender_id, borrower_id, amount, description, due_date, status, created_at"
       )
-      .or(`lender_id.eq.${userId},borrower_id.eq.${userId}`)
-      .in("status", ["active", "payment_pending"])
-      .order("created_at", { ascending: false });
-
-    if (loansError) {
-      console.error("Error cargando préstamos:", loansError);
-    } else {
-      setLoans(loansData ?? []);
-    }
-
-    const { data: paymentsData, error: paymentsError } = await supabase
-      .from("loan_payments")
-      .select(
-        "id, loan_id, paid_by, amount, evidence_url, payer_confirmed, receiver_confirmed, created_at"
+      .in("status", ["pending", "active", "payment_pending"])
+      .or(
+        `lender_id.eq.${session.user.id},borrower_id.eq.${session.user.id}`
       )
       .order("created_at", { ascending: false });
 
-    if (paymentsError) {
-      console.error("Error cargando pagos:", paymentsError);
+    if (loansError) {
+      console.error(loansError);
     } else {
-      setPayments(paymentsData ?? []);
+      setLoans(loanData ?? []);
+    }
+
+    const { data: paymentData, error: paymentsError } = await supabase
+      .from("loan_payments")
+      .select(
+        "id, loan_id, paid_by, amount, evidence_url, payer_confirmed, receiver_confirmed"
+      );
+
+    if (paymentsError) {
+      console.error(paymentsError);
+    } else {
+      setPayments(paymentData ?? []);
     }
 
     setLoading(false);
@@ -122,6 +118,8 @@ export default function Home() {
 
   async function loginWithGoogle() {
     setLoginLoading(true);
+
+    const supabase = createClient();
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -145,12 +143,14 @@ export default function Home() {
 
     const numericAmount = Number(amount);
 
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    if (numericAmount <= 0) {
       alert("La cantidad debe ser mayor que 0.");
       return;
     }
 
     setSending(true);
+
+    const supabase = createClient();
 
     const {
       data: { session },
@@ -193,7 +193,7 @@ export default function Home() {
     if (acceptanceError) {
       console.error(acceptanceError);
       alert(
-        "El préstamo se creó, pero hubo un problema registrando las aceptaciones."
+        "El préstamo se creó, pero hubo un problema registrando la aceptación."
       );
       setSending(false);
       return;
@@ -204,9 +204,66 @@ export default function Home() {
     setSelectedUser(null);
     setAmount("");
     setDescription("");
-    setSending(false);
 
     await loadData();
+
+    setSending(false);
+  }
+
+  async function responderSolicitud(
+    loanId: string,
+    aceptar: boolean
+  ) {
+    setResponseLoading(loanId);
+
+    const supabase = createClient();
+
+    const { error } = await supabase.rpc(
+      "responder_solicitud_prestamo",
+      {
+        p_loan_id: loanId,
+        p_aceptar: aceptar,
+      }
+    );
+
+    if (error) {
+      console.error(error);
+      alert("No se pudo responder la solicitud: " + error.message);
+      setResponseLoading(null);
+      return;
+    }
+
+    alert(
+      aceptar
+        ? "¡Solicitud aceptada!"
+        : "Solicitud rechazada."
+    );
+
+    await loadData();
+
+    setResponseLoading(null);
+  }
+
+  function obtenerNombreContraparte(loan: Loan) {
+    if (loan.lender_id === currentUserId) {
+      const borrower = users.find(
+        (user) => user.id === loan.borrower_id
+      );
+
+      return borrower?.full_name || borrower?.email || "Usuario";
+    }
+
+    const lender = users.find(
+      (user) => user.id === loan.lender_id
+    );
+
+    return lender?.full_name || lender?.email || "Usuario";
+  }
+
+  function obtenerPago(loanId: string) {
+    return payments.find(
+      (payment) => payment.loan_id === loanId
+    );
   }
 
   function abrirRegistroPago(loan: Loan) {
@@ -216,30 +273,21 @@ export default function Home() {
   }
 
   function cerrarRegistroPago() {
-    if (paymentSending) return;
-
     setPaymentLoan(null);
     setPaymentAmount("");
     setPaymentFile(null);
   }
 
   async function registrarPago() {
-    if (!paymentLoan) return;
-
-    if (!paymentAmount) {
-      alert("Indica la cantidad pagada.");
-      return;
-    }
-
-    if (!paymentFile) {
-      alert("Selecciona el comprobante del pago.");
+    if (!paymentLoan || !paymentFile || !currentUserId) {
+      alert("Selecciona el comprobante de pago.");
       return;
     }
 
     const numericAmount = Number(paymentAmount);
 
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      alert("La cantidad pagada debe ser mayor que 0.");
+    if (numericAmount <= 0) {
+      alert("La cantidad debe ser mayor que 0.");
       return;
     }
 
@@ -255,440 +303,481 @@ export default function Home() {
       return;
     }
 
-    const maxSize = 5 * 1024 * 1024;
-
-    if (paymentFile.size > maxSize) {
-      alert("El comprobante no puede pesar más de 5 MB.");
-      return;
-    }
-
-    if (!currentUserId) {
-      alert("Tu sesión ha expirado.");
+    if (paymentFile.size > 5 * 1024 * 1024) {
+      alert("El comprobante no puede superar 5 MB.");
       return;
     }
 
     setPaymentSending(true);
 
-    try {
-      const extension =
-        paymentFile.name.split(".").pop()?.toLowerCase() || "file";
+    const supabase = createClient();
 
-      const filePath = `${currentUserId}/${paymentLoan.id}/${crypto.randomUUID()}.${extension}`;
+    const extension =
+      paymentFile.name.split(".").pop()?.toLowerCase() || "file";
 
-      const { error: uploadError } = await supabase.storage
-        .from("payment-evidence")
-        .upload(filePath, paymentFile, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: paymentFile.type,
-        });
+    const filePath = `${currentUserId}/${paymentLoan.id}/${crypto.randomUUID()}.${extension}`;
 
-      if (uploadError) {
-        console.error(uploadError);
-        alert("No se pudo subir el comprobante: " + uploadError.message);
-        setPaymentSending(false);
-        return;
-      }
+    const { error: uploadError } = await supabase.storage
+      .from("payment-evidence")
+      .upload(filePath, paymentFile);
 
-      const { error: paymentError } = await supabase
-        .from("loan_payments")
-        .insert({
-          loan_id: paymentLoan.id,
-          paid_by: currentUserId,
-          amount: numericAmount,
-          evidence_url: filePath,
-          payer_confirmed: true,
-          receiver_confirmed: false,
-        });
-
-      if (paymentError) {
-        console.error(paymentError);
-
-        await supabase.storage
-          .from("payment-evidence")
-          .remove([filePath]);
-
-        alert("No se pudo registrar el pago: " + paymentError.message);
-        setPaymentSending(false);
-        return;
-      }
-
-      const { error: loanError } = await supabase
-        .from("loans")
-        .update({
-          status: "payment_pending",
-        })
-        .eq("id", paymentLoan.id);
-
-      if (loanError) {
-        console.error(loanError);
-        alert(
-          "El pago fue registrado, pero no se pudo actualizar el estado del préstamo."
-        );
-        setPaymentSending(false);
-        return;
-      }
-
+    if (uploadError) {
+      console.error(uploadError);
       alert(
-        "¡Pago registrado! La otra persona deberá confirmar la recepción."
+        "No se pudo subir el comprobante: " +
+          uploadError.message
       );
-
-      setPaymentLoan(null);
-      setPaymentAmount("");
-      setPaymentFile(null);
       setPaymentSending(false);
-
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Ocurrió un error inesperado al registrar el pago.");
-      setPaymentSending(false);
-    }
-  }
-
-  function obtenerNombreContraparte(loan: Loan) {
-    if (loan.borrower_id === currentUserId) {
-      const lender = users.find((user) => user.id === loan.lender_id);
-      return lender?.full_name || lender?.email || "La otra persona";
+      return;
     }
 
-    const borrower = users.find((user) => user.id === loan.borrower_id);
-    return borrower?.full_name || borrower?.email || "La otra persona";
-  }
+    const { error: paymentError } = await supabase
+      .from("loan_payments")
+      .insert({
+        loan_id: paymentLoan.id,
+        paid_by: currentUserId,
+        amount: numericAmount,
+        evidence_url: filePath,
+        payer_confirmed: true,
+        receiver_confirmed: false,
+      });
 
-  function obtenerPago(loanId: string) {
-    return payments.find((payment) => payment.loan_id === loanId);
+    if (paymentError) {
+      console.error(paymentError);
+      alert(
+        "El comprobante se subió, pero no se pudo registrar el pago: " +
+          paymentError.message
+      );
+      setPaymentSending(false);
+      return;
+    }
+
+    const { error: loanError } = await supabase
+      .from("loans")
+      .update({
+        status: "payment_pending",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", paymentLoan.id);
+
+    if (loanError) {
+      console.error(loanError);
+      alert(
+        "El pago se registró, pero no se pudo actualizar el préstamo."
+      );
+      setPaymentSending(false);
+      return;
+    }
+
+    alert(
+      "¡Pago registrado! La otra persona debe confirmar que recibió el pago."
+    );
+
+    cerrarRegistroPago();
+
+    await loadData();
+
+    setPaymentSending(false);
   }
 
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-100">
-        <p>Cargando...</p>
+      <main className="min-h-screen bg-gray-100 p-6">
+        <div className="mx-auto max-w-md">
+          <div className="rounded-2xl bg-white p-6 shadow">
+            Cargando...
+          </div>
+        </div>
       </main>
     );
   }
 
   if (!email) {
     return (
-      <main className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
-        <div className="w-full max-w-sm bg-white rounded-3xl shadow-lg p-8 text-center">
-          <div className="text-5xl mb-5">💰</div>
+      <main className="min-h-screen bg-gray-100 p-6">
+        <div className="mx-auto flex min-h-[80vh] max-w-md items-center">
+          <div className="w-full rounded-3xl bg-white p-7 shadow-lg">
+            <h1 className="text-3xl font-bold text-gray-900">
+              Préstamos
+            </h1>
 
-          <h1 className="text-3xl font-bold text-slate-900">
-            Préstamos
-          </h1>
+            <p className="mt-3 text-gray-600">
+              Una aplicación privada para administrar préstamos
+              entre personas.
+            </p>
 
-          <p className="text-slate-500 mt-2 mb-8">
-            Administra tus préstamos de forma sencilla.
-          </p>
-
-          <button
-            onClick={loginWithGoogle}
-            disabled={loginLoading}
-            className="w-full rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
-          >
-            {loginLoading ? "Conectando..." : "Continuar con Google"}
-          </button>
-
-          <p className="text-xs text-slate-400 mt-6">
-            Acceso exclusivo para usuarios autorizados.
-          </p>
+            <button
+              onClick={loginWithGoogle}
+              disabled={loginLoading}
+              className="mt-8 w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
+            >
+              {loginLoading
+                ? "Conectando..."
+                : "Continuar con Google"}
+            </button>
+          </div>
         </div>
       </main>
     );
   }
 
+  const pendingRequests = loans.filter(
+    (loan) =>
+      loan.status === "pending" &&
+      loan.lender_id === currentUserId
+  );
+
+  const myLoans = loans.filter(
+    (loan) => loan.status === "active"
+  );
+
+  const paymentPendingLoans = loans.filter(
+    (loan) => loan.status === "payment_pending"
+  );
+
   return (
-    <main className="min-h-screen bg-slate-100 p-6">
-      <div className="max-w-md mx-auto space-y-6">
-        <div className="bg-white rounded-3xl shadow-lg p-6">
-          <h1 className="text-2xl font-bold">Bienvenido 👋</h1>
+    <main className="min-h-screen bg-gray-100 p-4 pb-10">
+      <div className="mx-auto max-w-md space-y-5">
 
-          <p className="text-slate-500 mt-2">{email}</p>
-        </div>
-
-        {/* PRÉSTAMOS ACTIVOS */}
-        <div className="bg-white rounded-3xl shadow-lg p-6">
-          <h2 className="text-xl font-bold">Mis préstamos</h2>
-
-          <p className="text-slate-500 mt-2 mb-5">
-            Aquí aparecerán tus préstamos activos y sus pagos.
+        {/* ENCABEZADO */}
+        <section className="rounded-3xl bg-white p-6 shadow">
+          <p className="text-sm text-gray-500">
+            Sesión iniciada como
           </p>
 
-          {loans.length === 0 ? (
-            <div className="rounded-2xl bg-slate-50 p-5 text-center">
-              <p className="text-slate-500">
-                No tienes préstamos activos.
+          <h1 className="mt-1 text-xl font-bold text-gray-900">
+            {email}
+          </h1>
+
+          <p className="mt-3 text-sm text-gray-600">
+            Administra tus préstamos de forma sencilla.
+          </p>
+        </section>
+
+        {/* SOLICITUDES PENDIENTES */}
+        {pendingRequests.length > 0 && (
+          <section className="rounded-3xl bg-white p-6 shadow">
+            <div className="mb-4">
+              <h2 className="text-xl font-bold text-gray-900">
+                Solicitudes pendientes
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Estas personas te han solicitado un préstamo.
               </p>
             </div>
-          ) : (
+
             <div className="space-y-4">
-              {loans.map((loan) => {
+              {pendingRequests.map((loan) => (
+                <div
+                  key={loan.id}
+                  className="rounded-2xl border border-gray-200 p-4"
+                >
+                  <p className="font-semibold text-gray-900">
+                    {obtenerNombreContraparte(loan)}
+                  </p>
+
+                  <p className="mt-2 text-2xl font-bold text-gray-900">
+                    ${loan.amount.toFixed(2)}
+                  </p>
+
+                  {loan.description && (
+                    <p className="mt-2 text-sm text-gray-600">
+                      {loan.description}
+                    </p>
+                  )}
+
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() =>
+                        responderSolicitud(loan.id, false)
+                      }
+                      disabled={responseLoading === loan.id}
+                      className="rounded-xl border border-gray-300 px-4 py-3 font-semibold text-gray-700 disabled:opacity-50"
+                    >
+                      Rechazar
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        responderSolicitud(loan.id, true)
+                      }
+                      disabled={responseLoading === loan.id}
+                      className="rounded-xl bg-black px-4 py-3 font-semibold text-white disabled:opacity-50"
+                    >
+                      {responseLoading === loan.id
+                        ? "Guardando..."
+                        : "Aceptar"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* PRÉSTAMOS ACTIVOS */}
+        <section className="rounded-3xl bg-white p-6 shadow">
+          <h2 className="text-xl font-bold text-gray-900">
+            Mis préstamos
+          </h2>
+
+          {myLoans.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">
+              No tienes préstamos activos.
+            </p>
+          ) : (
+            <div className="mt-4 space-y-4">
+              {myLoans.map((loan) => (
+                <div
+                  key={loan.id}
+                  className="rounded-2xl border border-gray-200 p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-gray-900">
+                      {obtenerNombreContraparte(loan)}
+                    </p>
+
+                    <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                      Activo
+                    </span>
+                  </div>
+
+                  <p className="mt-3 text-2xl font-bold">
+                    ${loan.amount.toFixed(2)}
+                  </p>
+
+                  {loan.description && (
+                    <p className="mt-2 text-sm text-gray-600">
+                      {loan.description}
+                    </p>
+                  )}
+
+                  {loan.borrower_id === currentUserId && (
+                    <button
+                      onClick={() =>
+                        abrirRegistroPago(loan)
+                      }
+                      className="mt-4 w-full rounded-xl bg-black px-4 py-3 font-semibold text-white"
+                    >
+                      Registrar pago
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* PAGOS PENDIENTES DE CONFIRMACIÓN */}
+        {paymentPendingLoans.length > 0 && (
+          <section className="rounded-3xl bg-white p-6 shadow">
+            <h2 className="text-xl font-bold text-gray-900">
+              Pagos pendientes
+            </h2>
+
+            <div className="mt-4 space-y-4">
+              {paymentPendingLoans.map((loan) => {
                 const payment = obtenerPago(loan.id);
-                const isBorrower = loan.borrower_id === currentUserId;
 
                 return (
                   <div
                     key={loan.id}
-                    className="border rounded-2xl p-4"
+                    className="rounded-2xl border border-gray-200 p-4"
                   >
-                    <div className="flex justify-between gap-3">
-                      <div>
-                        <p className="text-sm text-slate-500">
-                          {isBorrower ? "Le debes a" : "Te debe"}
-                        </p>
-
-                        <p className="font-semibold mt-1">
-                          {obtenerNombreContraparte(loan)}
-                        </p>
-                      </div>
-
-                      <p className="text-xl font-bold">
-                        ${Number(loan.amount).toFixed(2)}
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold">
+                        {obtenerNombreContraparte(loan)}
                       </p>
+
+                      <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-700">
+                        Pendiente
+                      </span>
                     </div>
 
-                    {loan.description && (
-                      <p className="text-sm text-slate-500 mt-3">
-                        {loan.description}
-                      </p>
+                    <p className="mt-3 text-2xl font-bold">
+                      $
+                      {(
+                        payment?.amount ?? loan.amount
+                      ).toFixed(2)}
+                    </p>
+
+                    {loan.lender_id === currentUserId && (
+                      <button
+                        onClick={() =>
+                          alert(
+                            "La confirmación de recepción se implementará en el siguiente paso."
+                          )
+                        }
+                        className="mt-4 w-full rounded-xl bg-black px-4 py-3 font-semibold text-white"
+                      >
+                        Confirmar recepción
+                      </button>
                     )}
 
-                    <div className="mt-4">
-                      {loan.status === "active" && !payment && isBorrower && (
-                        <button
-                          onClick={() => abrirRegistroPago(loan)}
-                          className="w-full bg-slate-900 text-white rounded-2xl py-3 font-semibold"
-                        >
-                          Registrar pago
-                        </button>
-                      )}
-
-                      {loan.status === "active" && !payment && !isBorrower && (
-                        <div className="rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
-                          El pago todavía no ha sido registrado.
-                        </div>
-                      )}
-
-                      {loan.status === "payment_pending" && (
-                        <div className="rounded-2xl bg-amber-50 p-4">
-                          <p className="font-semibold text-amber-900">
-                            Pago pendiente de confirmación
-                          </p>
-
-                          {payment && (
-                            <p className="text-sm text-amber-800 mt-1">
-                              Pago registrado por $
-                              {Number(payment.amount).toFixed(2)}.
-                            </p>
-                          )}
-
-                          {!isBorrower && (
-                            <button
-                              type="button"
-                              className="mt-3 w-full rounded-2xl border border-amber-300 bg-white py-3 font-semibold text-amber-900"
-                              onClick={() =>
-                                alert(
-                                  "El siguiente paso será confirmar la recepción del pago."
-                                )
-                              }
-                            >
-                              Confirmar recepción
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    {loan.borrower_id === currentUserId && (
+                      <p className="mt-4 text-sm text-gray-500">
+                        Esperando que la otra persona confirme
+                        la recepción.
+                      </p>
+                    )}
                   </div>
                 );
               })}
             </div>
-          )}
-        </div>
+          </section>
+        )}
 
         {/* SOLICITAR PRÉSTAMO */}
-        {!selectedUser ? (
-          <div className="bg-white rounded-3xl shadow-lg p-6">
-            <h2 className="text-xl font-bold">Solicitar préstamo</h2>
+        <section className="rounded-3xl bg-white p-6 shadow">
+          <h2 className="text-xl font-bold text-gray-900">
+            Solicitar préstamo
+          </h2>
 
-            <p className="text-slate-500 mt-2 mb-5">
-              Elige a la persona a quien quieres solicitarle dinero.
-            </p>
+          <div className="mt-5 space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                ¿A quién?
+              </label>
 
-            {users.length === 0 ? (
-              <p className="text-slate-500">
-                Todavía no hay otros usuarios registrados.
-              </p>
-            ) : (
-              <div className="space-y-3">
+              <select
+                value={selectedUser?.id ?? ""}
+                onChange={(e) => {
+                  const user = users.find(
+                    (item) => item.id === e.target.value
+                  );
+
+                  setSelectedUser(user ?? null);
+                }}
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3"
+              >
+                <option value="">
+                  Selecciona una persona
+                </option>
+
                 {users.map((user) => (
-                  <button
-                    key={user.id}
-                    onClick={() => setSelectedUser(user)}
-                    className="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"
-                  >
-                    <p className="font-semibold">
-                      {user.full_name || "Usuario"}
-                    </p>
-
-                    <p className="text-sm text-slate-500">
-                      {user.email}
-                    </p>
-                  </button>
+                  <option key={user.id} value={user.id}>
+                    {user.full_name || user.email}
+                  </option>
                 ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="bg-white rounded-3xl shadow-lg p-6">
-            <button
-              onClick={() => setSelectedUser(null)}
-              className="text-sm text-slate-500 mb-5"
-            >
-              ← Cambiar persona
-            </button>
+              </select>
+            </div>
 
-            <h2 className="text-xl font-bold">
-              Solicitar préstamo
-            </h2>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Cantidad
+              </label>
 
-            <p className="mt-2 mb-6">
-              Para:{" "}
-              <strong>
-                {selectedUser.full_name || selectedUser.email}
-              </strong>
-            </p>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) =>
+                  setAmount(e.target.value)
+                }
+                placeholder="Ej. 500"
+                className="w-full rounded-xl border border-gray-300 px-4 py-3"
+              />
+            </div>
 
-            <label className="block text-sm font-medium mb-2">
-              Cantidad
-            </label>
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                Descripción
+              </label>
 
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="Ej. 500"
-              className="w-full border rounded-2xl p-4 mb-5"
-            />
-
-            <label className="block text-sm font-medium mb-2">
-              Motivo
-            </label>
-
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="¿Para qué necesitas el préstamo?"
-              rows={4}
-              className="w-full border rounded-2xl p-4 mb-5"
-            />
+              <textarea
+                value={description}
+                onChange={(e) =>
+                  setDescription(e.target.value)
+                }
+                placeholder="¿Para qué es el préstamo?"
+                rows={3}
+                className="w-full rounded-xl border border-gray-300 px-4 py-3"
+              />
+            </div>
 
             <button
               onClick={solicitarPrestamo}
               disabled={sending}
-              className="w-full bg-slate-900 text-white rounded-2xl py-4 font-semibold disabled:opacity-50"
+              className="w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
             >
-              {sending ? "Enviando..." : "Enviar solicitud"}
+              {sending
+                ? "Enviando..."
+                : "Enviar solicitud"}
             </button>
           </div>
-        )}
+        </section>
       </div>
 
-      {/* MODAL REGISTRAR PAGO */}
+      {/* MODAL DE PAGO */}
       {paymentLoan && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-xl">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-xl font-bold">Registrar pago</h2>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold">
+                Registrar pago
+              </h2>
 
               <button
-                type="button"
                 onClick={cerrarRegistroPago}
-                disabled={paymentSending}
-                className="text-slate-500 text-2xl"
+                className="text-2xl text-gray-400"
               >
                 ×
               </button>
             </div>
 
-            <p className="text-slate-500 mt-2">
-              Registra el pago y adjunta el comprobante.
+            <p className="mt-3 text-sm text-gray-600">
+              Préstamo con {obtenerNombreContraparte(paymentLoan)}
             </p>
 
-            <div className="rounded-2xl bg-slate-50 p-4 mt-5">
-              <p className="text-sm text-slate-500">
-                Préstamo
-              </p>
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Cantidad pagada
+                </label>
 
-              <p className="text-2xl font-bold mt-1">
-                ${Number(paymentLoan.amount).toFixed(2)}
-              </p>
-            </div>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={paymentAmount}
+                  onChange={(e) =>
+                    setPaymentAmount(e.target.value)
+                  }
+                  className="w-full rounded-xl border border-gray-300 px-4 py-3"
+                />
+              </div>
 
-            <label className="block text-sm font-medium mt-5 mb-2">
-              Cantidad pagada
-            </label>
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Comprobante
+                </label>
 
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={paymentAmount}
-              onChange={(e) => setPaymentAmount(e.target.value)}
-              className="w-full border rounded-2xl p-4"
-              placeholder="Ej. 500"
-            />
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf"
+                  onChange={(e) =>
+                    setPaymentFile(
+                      e.target.files?.[0] ?? null
+                    )
+                  }
+                  className="w-full text-sm"
+                />
 
-            <label className="block text-sm font-medium mt-5 mb-2">
-              Comprobante
-            </label>
-
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,application/pdf"
-              onChange={(e) =>
-                setPaymentFile(e.target.files?.[0] ?? null)
-              }
-              className="w-full border rounded-2xl p-3 text-sm"
-            />
-
-            {paymentFile && (
-              <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm">
-                <p className="font-medium">
-                  {paymentFile.name}
-                </p>
-
-                <p className="text-slate-500 mt-1">
-                  {(paymentFile.size / 1024 / 1024).toFixed(2)} MB
+                <p className="mt-2 text-xs text-gray-500">
+                  JPG, PNG, WEBP o PDF. Máximo 5 MB.
                 </p>
               </div>
-            )}
-
-            <p className="text-xs text-slate-400 mt-4">
-              Formatos permitidos: JPG, PNG, WEBP o PDF. Máximo 5 MB.
-            </p>
-
-            <div className="grid grid-cols-2 gap-3 mt-6">
-              <button
-                type="button"
-                onClick={cerrarRegistroPago}
-                disabled={paymentSending}
-                className="rounded-2xl border py-4 font-semibold disabled:opacity-50"
-              >
-                Cancelar
-              </button>
 
               <button
-                type="button"
                 onClick={registrarPago}
                 disabled={paymentSending}
-                className="rounded-2xl bg-slate-900 text-white py-4 font-semibold disabled:opacity-50"
+                className="w-full rounded-xl bg-black px-5 py-4 font-semibold text-white disabled:opacity-50"
               >
                 {paymentSending
-                  ? "Subiendo..."
-                  : "Enviar pago"}
+                  ? "Registrando..."
+                  : "Confirmar pago"}
               </button>
             </div>
           </div>
