@@ -124,6 +124,33 @@ export default function Home() {
     setLoading(false);
   }
 
+  async function confirmarRecepcion(loanId: string) {
+  setResponseLoading(loanId);
+
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("confirmar_recepcion_pago", {
+    p_loan_id: loanId,
+  });
+
+  if (error) {
+    console.error(error);
+    mostrarModal("No se pudo confirmar", error.message, "error");
+    setResponseLoading(null);
+    return;
+  }
+
+  await loadData();
+
+  mostrarModal(
+    "Pago confirmado",
+    "La recepción del pago fue confirmada y el préstamo quedó completado.",
+    "success"
+  );
+
+  setResponseLoading(null);
+}
+
   function mostrarModal(
     title: string,
     message: string,
@@ -734,13 +761,8 @@ export default function Home() {
 
                     {yoPreste ? (
                       <button
-                        onClick={() =>
-                          mostrarModal(
-                            "Confirmar recepción",
-                            "La confirmación de recepción se habilitará en el siguiente paso.",
-                            "info"
-                          )
-                        }
+                        onClick={() => confirmarRecepcion(loan.id)}
+                        disabled={responseLoading === loan.id}
                         className="mt-5 w-full rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white"
                       >
                         Confirmar recepción
@@ -937,10 +959,10 @@ export default function Home() {
           <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
             <div
               className={`flex h-12 w-12 items-center justify-center rounded-full text-xl font-bold ${modal.type === "success"
-                  ? "bg-emerald-100 text-emerald-700"
-                  : modal.type === "error"
-                    ? "bg-red-100 text-red-700"
-                    : "bg-slate-100 text-slate-700"
+                ? "bg-emerald-100 text-emerald-700"
+                : modal.type === "error"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-slate-100 text-slate-700"
                 }`}
             >
               {modal.type === "success"
