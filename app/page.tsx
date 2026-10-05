@@ -95,69 +95,82 @@ export default function Home() {
   async function loadData() {
     setLoading(true);
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    if (!session) {
-      setCurrentUserId(null);
-      setEmail("");
+      if (!session) {
+        setCurrentUserId(null);
+        setEmail("");
+        return;
+      }
+
+      setCurrentUserId(session.user.id);
+      setEmail(session.user.email ?? "");
+
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select(
+          "id, full_name, email, avatar_url, is_admin, is_active"
+        )
+        .eq("is_active", true)
+        .neq("id", session.user.id)
+        .order("full_name");
+
+      if (profilesError) {
+        console.error("Error cargando perfiles:", profilesError);
+      }
+
+      setUsers(profiles ?? []);
+
+      const { data: loanData, error: loanError } = await supabase
+        .from("loans")
+        .select(
+          "id, lender_id, borrower_id, amount, description, due_date, status, created_at, updated_at"
+        )
+        .or(
+          `borrower_id.eq.${session.user.id},lender_id.eq.${session.user.id}`
+        )
+        .in("status", [
+          "pending",
+          "active",
+          "payment_pending",
+          "completed",
+          "rejected",
+          "cancelled",
+        ])
+        .order("created_at", { ascending: false });
+
+      if (loanError) {
+        console.error("Error cargando préstamos:", loanError);
+      }
+
+      setLoans(loanData ?? []);
+
+      const { data: paymentData, error: paymentError } = await supabase
+        .from("loan_payments")
+        .select(
+          "id, loan_id, paid_by, amount, evidence_url, payer_confirmed, receiver_confirmed, created_at"
+        )
+        .order("created_at", { ascending: false });
+
+      if (paymentError) {
+        console.error("Error cargando pagos:", paymentError);
+      }
+
+      setPayments(paymentData ?? []);
+    } catch (error) {
+      console.error("Error inesperado en loadData:", error);
+
+      mostrarModal(
+        "Error",
+        "No se pudieron cargar los datos de la aplicación.",
+        "error"
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setCurrentUserId(session.user.id);
-    setEmail(session.user.email ?? "");
-
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select(
-        "id, full_name, email, avatar_url, is_admin, is_active"
-      )
-      .eq("is_active", true)
-      .neq("id", session.user.id)
-      .order("full_name");
-
-    setUsers(profiles ?? []);
-
-    const { data: loanData, error: loanError } = await supabase
-      .from("loans")
-      .select(
-        "id, lender_id, borrower_id, amount, description, due_date, status, created_at, updated_at"
-      )
-      .or(
-        `borrower_id.eq.${session.user.id},lender_id.eq.${session.user.id}`
-      )
-      .in("status", [
-        "pending",
-        "active",
-        "payment_pending",
-        "completed",
-        "rejected",
-        "cancelled",
-      ])
-      .order("created_at", { ascending: false });
-
-    if (loanError) {
-      console.error(loanError);
-    }
-
-    setLoans(loanData ?? []);
-
-    const { data: paymentData, error: paymentError } = await supabase
-      .from("loan_payments")
-      .select(
-        "id, loan_id, paid_by, amount, evidence_url, payer_confirmed, receiver_confirmed, created_at"
-      )
-      .order("created_at", { ascending: false });
-
-    if (paymentError) {
-      console.error(paymentError);
-    }
-
-    setPayments(paymentData ?? []);
-
-    setLoading(false);
   }
 
   async function loginWithGoogle() {
