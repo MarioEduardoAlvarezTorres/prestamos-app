@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase";
 
 import {
@@ -99,7 +99,8 @@ export default function Home() {
   const [users, setUsers] = useState<Profile[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
-
+  const currentUserIdRef = useRef<string | null>(null);
+  const initialLoadDone = useRef(false);
   const [sharedExpenses, setSharedExpenses] = useState<SharedExpense[]>([]);
   const [sharedParticipants, setSharedParticipants] = useState<
     SharedExpenseParticipant[]
@@ -246,21 +247,21 @@ export default function Home() {
 
   async function loadData() {
     try {
-      setLoading(true);
+      if (!initialLoadDone.current) {
+        setLoading(true);
+      }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
 
       if (!session) {
+        currentUserIdRef.current = null;
         setCurrentUserId(null);
         setEmail("");
-        setLoading(false);
         return;
       }
 
       const userId = session.user.id;
-
+      currentUserIdRef.current = userId;
       setCurrentUserId(userId);
       setEmail(session.user.email || "");
 
@@ -352,12 +353,12 @@ export default function Home() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
+        if (currentUserIdRef.current === session.user.id) return;
+
+        currentUserIdRef.current = session.user.id;
         setCurrentUserId(session.user.id);
         setEmail(session.user.email || "");
-
-        setTimeout(() => {
-          loadData();
-        }, 0);
+        setTimeout(() => loadData(), 0);
       } else {
         setCurrentUserId(null);
         setEmail("");
@@ -2837,7 +2838,7 @@ export default function Home() {
               <input
                 id="payment-file"
                 type="file"
-                accept="image/*,.heic,.heif,.pdf"
+                accept="image/*,application/pdf"
                 multiple={false}
                 onChange={seleccionarComprobante}
                 className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
@@ -2981,7 +2982,7 @@ export default function Home() {
               <input
                 id="shared-payment-file"
                 type="file"
-                accept="image/*,.heic,.heif,.pdf"
+                accept="image/*,application/pdf"
                 multiple={false}
                 onChange={seleccionarComprobanteGasto}
                 className="block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900"
