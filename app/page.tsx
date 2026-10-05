@@ -1208,6 +1208,11 @@ export default function Home() {
       loan.status === "pending" && loan.borrower_id === currentUserId
   );
 
+  const prestamosPorAceptar = loans.filter(
+    (loan) =>
+      loan.status === "pending" && loan.lender_id === currentUserId
+  );
+
   const pagosPendientes = loans.filter(
     (loan) =>
       loan.status === "payment_pending" && loan.lender_id === currentUserId
@@ -1408,6 +1413,61 @@ export default function Home() {
               </div>
             </section>
 
+            {/* PRÉSTAMOS PENDIENTES DE ACEPTACIÓN */}
+
+            {prestamosPorAceptar.length > 0 && (
+              <section>
+                <h2 className="text-lg font-bold text-slate-900 mb-3">
+                  Pendientes por aceptar
+                </h2>
+
+                <div className="space-y-3">
+                  {prestamosPorAceptar.map((loan) => (
+                    <div
+                      key={loan.id}
+                      className="bg-white rounded-3xl border border-amber-200 p-5 shadow-sm"
+                    >
+                      <div className="flex justify-between gap-4">
+                        <div>
+                          <p className="font-semibold text-slate-900">
+                            Le prestaste a {obtenerNombre(loan.borrower_id)}
+                          </p>
+
+                          <p className="text-sm text-slate-700 mt-1">
+                            {loan.description || "Préstamo"}
+                          </p>
+                        </div>
+
+                        <p className="font-bold text-lg text-slate-900 whitespace-nowrap">
+                          {formatearMonto(loan.amount)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 text-sm text-slate-700 space-y-1">
+                        <p>
+                          Fecha del registro: {formatearFecha(loan.created_at)}
+                        </p>
+
+                        <p>
+                          Fecha límite: {formatearFecha(loan.due_date)}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                        <p className="font-semibold text-amber-900">
+                          Pendiente de aceptación
+                        </p>
+
+                        <p className="text-sm text-amber-800 mt-1">
+                          {obtenerNombre(loan.borrower_id)} todavía no ha aceptado
+                          este préstamo.
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
             {/* PRÉSTAMOS POR CONFIRMAR */}
 
             {prestamosPorConfirmar.length > 0 && (
@@ -1939,29 +1999,18 @@ export default function Home() {
                           </p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 mt-4">
+                        <div className="mt-4">
                           <button
                             type="button"
                             onClick={() =>
                               responderGastoCompartido(expense.id, true)
                             }
                             disabled={responseLoading === expense.id}
-                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                            className="w-full rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                           >
                             {responseLoading === expense.id
                               ? "Guardando..."
                               : "Aceptar"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              responderGastoCompartido(expense.id, false)
-                            }
-                            disabled={responseLoading === expense.id}
-                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
-                          >
-                            Rechazar
                           </button>
                         </div>
                       </div>
