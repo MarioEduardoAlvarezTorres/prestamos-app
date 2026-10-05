@@ -1241,12 +1241,24 @@ export default function Home() {
   const misGastosCompartidos = sharedExpenses.filter((expense) => {
     if (!currentUserId) return false;
 
+    // En "Mis gastos compartidos" solo mostramos gastos activos
+    if (expense.status !== "active") return false;
+
+    const participantes = sharedParticipants.filter(
+      (participant) => participant.expense_id === expense.id
+    );
+
+    // Si todos ya pagaron, ya no debe aparecer aquí.
+    const todosPagaron =
+      participantes.length > 0 &&
+      participantes.every((participant) => participant.paid);
+
+    if (todosPagaron) return false;
+
     return (
       expense.created_by === currentUserId ||
-      sharedParticipants.some(
-        (participant) =>
-          participant.expense_id === expense.id &&
-          participant.user_id === currentUserId
+      participantes.some(
+        (participant) => participant.user_id === currentUserId
       )
     );
   });
