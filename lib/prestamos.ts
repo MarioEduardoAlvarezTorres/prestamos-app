@@ -35,8 +35,6 @@ export async function registrarPrestamo(params: {
 
   if (error) throw error;
 
-  // El prestamista registra el préstamo.
-  // El deudor será quien deba confirmarlo.
   const { error: acceptanceError } = await supabase
     .from("loan_acceptances")
     .insert({
@@ -93,18 +91,30 @@ export async function registrarPago(params: {
     throw new Error("Debes seleccionar un comprobante.");
   }
 
+  const maxSize = 10 * 1024 * 1024;
+
+  if (params.file.size > maxSize) {
+    throw new Error("El comprobante debe pesar máximo 10 MB.");
+  }
+
   const extension =
     params.file.name.split(".").pop()?.toLowerCase() || "jpg";
 
-  const filePath = `${params.userId}/${params.loanId}-${Date.now()}.${extension}`;
+  const filePath = `${params.userId}/${params.loanId}-${crypto.randomUUID()}.${extension}`;
 
   const { error: uploadError } = await supabase.storage
     .from("payment-evidence")
     .upload(filePath, params.file, {
+      cacheControl: "3600",
       upsert: false,
+      contentType: params.file.type || "application/octet-stream",
     });
 
-  if (uploadError) throw uploadError;
+  if (uploadError) {
+    throw new Error(
+      `No se pudo subir el comprobante: ${uploadError.message}`
+    );
+  }
 
   const { error: paymentError } = await supabase
     .from("loan_payments")
@@ -133,7 +143,9 @@ export async function registrarPago(params: {
     })
     .eq("id", params.loanId);
 
-  if (loanError) throw loanError;
+  if (loanError) {
+    throw loanError;
+  }
 
   return {
     evidencePath: filePath,
@@ -143,11 +155,23 @@ export async function registrarPago(params: {
 export async function verComprobante(path: string) {
   const supabase = createClient();
 
+  if (!path) {
+    throw new Error("No hay comprobante para mostrar.");
+  }
+
   const { data, error } = await supabase.storage
     .from("payment-evidence")
     .createSignedUrl(path, 60 * 10);
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(
+      `No se pudo abrir el comprobante: ${error.message}`
+    );
+  }
+
+  if (!data?.signedUrl) {
+    throw new Error("No se pudo generar el enlace del comprobante.");
+  }
 
   return data.signedUrl;
 }
