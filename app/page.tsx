@@ -92,6 +92,45 @@ type ModalData = {
   type?: "success" | "error" | "info";
 };
 
+// ============================================================
+// ACORDEÓN (fuera de Home para que no se remonte en cada render)
+// ============================================================
+
+function Acordeon({
+  titulo,
+  cuenta,
+  abierto,
+  onToggle,
+  children,
+}: {
+  titulo: string;
+  cuenta: number;
+  abierto: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="text-lg font-bold text-slate-900">
+          {titulo}{" "}
+          <span className="text-sm font-semibold text-slate-500">
+            ({cuenta})
+          </span>
+        </span>
+
+        <span className="text-slate-500">{abierto ? "▲" : "▼"}</span>
+      </button>
+
+      {abierto && <div className="px-4 pb-4 space-y-3">{children}</div>}
+    </section>
+  );
+}
+
 const supabase = createClient();
 
 export default function Home() {
@@ -146,6 +185,18 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("activeTab", activeTab);
   }, [activeTab]);
+
+  // ============================================================
+  // HISTORIAL (acordeón y filtros)
+  // ============================================================
+
+  const [histAbierto, setHistAbierto] = useState({
+    prestamos: true,
+    gastos: false,
+  });
+  const [histTexto, setHistTexto] = useState("");
+  const [histDesde, setHistDesde] = useState("");
+  const [histHasta, setHistHasta] = useState("");
 
   // ============================================================
   // PRÉSTAMOS
@@ -793,7 +844,10 @@ export default function Home() {
       0
     );
 
-    return Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) / 100;
+    return (
+      Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) /
+      100
+    );
   }
 
   function limpiarFormularioGasto() {
@@ -832,7 +886,9 @@ export default function Home() {
     setSharedExpenseTitle(expense.title);
     setSharedExpenseDescription(expense.description || "");
     setSharedExpenseTotal(String(expense.total_amount));
-    setSharedExpenseUsers(participantes.map((participant) => participant.user_id));
+    setSharedExpenseUsers(
+      participantes.map((participant) => participant.user_id)
+    );
     setSharedExpenseMode(todosIguales ? "equal" : "custom");
 
     const sumaParticipantes = participantes.reduce(
@@ -842,7 +898,8 @@ export default function Home() {
 
     setSharedCreatorAmount(
       String(
-        Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) / 100
+        Math.round((Number(expense.total_amount) - sumaParticipantes) * 100) /
+        100
       )
     );
     setSharedCustomAmounts(
@@ -1225,10 +1282,16 @@ export default function Home() {
       loan.status === "cancelled"
   );
 
+  // Solicitudes que me hacen y aún no acepto.
+  // Solo aparecen aquí, nunca en "Gastos que me cobran".
   const gastosPendientes = sharedExpenses.filter((expense) => {
     if (!currentUserId) return false;
 
-    if (expense.status !== "pending") return false;
+    if (expense.status === "completed" || expense.status === "cancelled") {
+      return false;
+    }
+
+    if (expense.created_by === currentUserId) return false;
 
     return sharedParticipants.some(
       (participant) =>
@@ -1238,14 +1301,9 @@ export default function Home() {
     );
   });
 
-  const misGastosCompartidos = sharedExpenses.filter((expense) => {
-    if (!currentUserId) return false;
-
-    // Completados y cancelados solamente aparecen en Historial
-    if (
-      expense.status === "completed" ||
-      expense.status === "cancelled"
-    ) {
+  // Un gasto sigue visible hasta que TODOS los pagos estén confirmados.
+  function gastoVisibleActivo(expense: SharedExpense) {
+    if (expense.status === "completed" || expense.status === "cancelled") {
       return false;
     }
 
@@ -1253,25 +1311,29 @@ export default function Home() {
       (participant) => participant.expense_id === expense.id
     );
 
-    const soyCreador = expense.created_by === currentUserId;
-
-    // El gasto sigue visible hasta que TODOS los pagos
-    // hayan sido confirmados.
-    const todosLosPagosConfirmados =
+    const todosConfirmados =
       participantes.length > 0 &&
-      participantes.every(
-        (participant) =>
-          participant.payment_confirmed === true
-      );
+      participantes.every((participant) => participant.payment_confirmed === true);
 
-    if (todosLosPagosConfirmados) return false;
+    return !todosConfirmados;
+  }
 
-    return (
-      soyCreador ||
-      participantes.some(
-        (participant) =>
-          participant.user_id === currentUserId
-      )
+  // Gastos que YO creé (me deben su parte)
+  const gastosQueCobro = sharedExpenses.filter(
+    (expense) =>
+      expense.created_by === currentUserId && gastoVisibleActivo(expense)
+  );
+
+  // Gastos donde ME cobran (yo debo), ya aceptados
+  const gastosQuePago = sharedExpenses.filter((expense) => {
+    if (expense.created_by === currentUserId) return false;
+    if (!gastoVisibleActivo(expense)) return false;
+
+    return sharedParticipants.some(
+      (participant) =>
+        participant.expense_id === expense.id &&
+        participant.user_id === currentUserId &&
+        participant.accepted === true
     );
   });
 
@@ -1279,6 +1341,375 @@ export default function Home() {
     (expense) =>
       expense.status === "completed" || expense.status === "cancelled"
   );
+
+  // ------------------------------------------------------------
+  // Filtros del historial
+  // ------------------------------------------------------------
+
+  function normalizar(texto: string) {
+    return texto
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  }
+
+  function dentroDeRango(fecha: string) {
+    const t = new Date(fecha).getTime();
+
+    if (histDesde && t < new Date(`${histDesde}T00:00:00`).getTime()) {
+      return false;
+    }
+
+    if (histHasta && t > new Date(`${histHasta}T23:59:59`).getTime()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  const busqueda = normalizar(histTexto.trim());
+
+  const historialPrestamosFiltrado = historialPrestamos.filter((loan) => {
+    if (!dentroDeRango(loan.created_at)) return false;
+    if (!busqueda) return true;
+
+    const texto = normalizar(
+      [
+        loan.description || "",
+        obtenerNombre(loan.lender_id),
+        obtenerNombre(loan.borrower_id),
+        String(loan.amount),
+      ].join(" ")
+    );
+
+    return texto.includes(busqueda);
+  });
+
+  const historialGastosFiltrado = historialGastos.filter((expense) => {
+    if (!dentroDeRango(expense.created_at)) return false;
+    if (!busqueda) return true;
+
+    const nombres = sharedParticipants
+      .filter((participant) => participant.expense_id === expense.id)
+      .map((participant) => obtenerNombre(participant.user_id));
+
+    const texto = normalizar(
+      [
+        expense.title,
+        expense.description || "",
+        obtenerNombre(expense.created_by),
+        String(expense.total_amount),
+        ...nombres,
+      ].join(" ")
+    );
+
+    return texto.includes(busqueda);
+  });
+
+  const hayFiltros = Boolean(histTexto || histDesde || histHasta);
+
+  // ------------------------------------------------------------
+  // Tarjeta de un gasto compartido (Gastos → creados / me cobran)
+  // ------------------------------------------------------------
+
+  function renderGastoCompartido(expense: SharedExpense) {
+    const soyCreador = expense.created_by === currentUserId;
+
+    const miParticipacion = sharedParticipants.find(
+      (item) =>
+        item.expense_id === expense.id && item.user_id === currentUserId
+    );
+
+    const otrosParticipantes = sharedParticipants.filter(
+      (item) =>
+        item.expense_id === expense.id && item.user_id !== currentUserId
+    );
+
+    const tienePagos = gastoTienePagos(expense.id);
+
+    return (
+      <div
+        key={expense.id}
+        className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
+      >
+        <span
+          className={`inline-flex mb-2 rounded-full px-3 py-1 text-xs font-semibold ${soyCreador
+            ? "bg-emerald-100 text-emerald-700"
+            : "bg-blue-100 text-blue-700"
+            }`}
+        >
+          {soyCreador ? "Yo lo creé · me deben" : "Me cobran · yo debo"}
+        </span>
+
+        <div className="flex justify-between gap-4">
+          <div>
+            <p className="font-semibold text-slate-900">{expense.title}</p>
+
+            <p className="text-sm text-slate-700 mt-1">
+              Total: {formatearMonto(expense.total_amount)}
+            </p>
+
+            <p className="text-sm text-slate-700 mt-1">
+              Pagó el total: {obtenerNombre(expense.created_by)}
+            </p>
+          </div>
+
+          <span
+            className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "active"
+              ? "bg-emerald-100 text-emerald-700"
+              : expense.status === "pending"
+                ? "bg-amber-100 text-amber-700"
+                : expense.status === "completed"
+                  ? "bg-blue-100 text-blue-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+          >
+            {expense.status === "active"
+              ? "Activo"
+              : expense.status === "pending"
+                ? "Pendiente"
+                : expense.status === "completed"
+                  ? "Completado"
+                  : "Cancelado"}
+          </span>
+        </div>
+
+        {expense.description && (
+          <p className="text-sm text-slate-700 mt-3">{expense.description}</p>
+        )}
+
+        {/* SI YO SOY PARTICIPANTE */}
+
+        {!soyCreador && miParticipacion && (
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-900">Mi parte</p>
+
+            <p className="text-2xl font-bold text-slate-900 mt-1">
+              {formatearMonto(miParticipacion.amount)}
+            </p>
+
+            {!miParticipacion.accepted && (
+              <p className="text-sm text-amber-700 mt-2">
+                Falta aceptar la solicitud.
+              </p>
+            )}
+
+            {miParticipacion.accepted && !miParticipacion.paid && (
+              <>
+                <p className="text-sm text-red-700 mt-2">
+                  Falta registrar tu pago.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirPagoGastoCompartido(expense, miParticipacion)
+                  }
+                  className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                >
+                  Registrar mi pago
+                </button>
+              </>
+            )}
+
+            {miParticipacion.paid && (
+              <div className="mt-3">
+                <p className="text-sm text-emerald-700 font-semibold">
+                  ✓ Pago registrado
+                </p>
+
+                {miParticipacion.payment_amount && (
+                  <p className="text-sm text-slate-700 mt-1">
+                    Pagaste: {formatearMonto(miParticipacion.payment_amount)}
+                  </p>
+                )}
+
+                {miParticipacion.payment_confirmed ? (
+                  <p className="text-sm text-emerald-700 mt-2 font-semibold">
+                    ✓ El pago fue confirmado.
+                  </p>
+                ) : (
+                  <p className="text-sm text-amber-700 mt-2">
+                    Esperando confirmación de quien pagó el gasto.
+                  </p>
+                )}
+
+                {miParticipacion.payment_evidence_url && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      verComprobanteGastoCompartido(
+                        miParticipacion.payment_evidence_url
+                      )
+                    }
+                    className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
+                  >
+                    Ver mi comprobante
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SI YO SOY EL CREADOR */}
+
+        {soyCreador && (
+          <>
+            <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+              <p className="text-sm text-slate-700">
+                Tu parte:{" "}
+                <span className="font-bold text-slate-900">
+                  {formatearMonto(obtenerMiParteGasto(expense))}
+                </span>
+              </p>
+
+              <p className="text-sm text-slate-700 mt-1">
+                Tú pagaste el total de este gasto por adelantado.
+              </p>
+
+              <p className="text-sm text-slate-700 mt-1">
+                Los participantes deben aceptar y después pagarte su parte.
+              </p>
+            </div>
+
+            {!tienePagos &&
+              expense.status !== "completed" &&
+              expense.status !== "cancelled" && (
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => iniciarEdicionGasto(expense)}
+                    className="rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                  >
+                    ✏️ Editar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setExpenseToDelete(expense)}
+                    className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold"
+                  >
+                    🗑️ Eliminar
+                  </button>
+                </div>
+              )}
+
+            {tienePagos && (
+              <p className="text-xs text-slate-500 mt-3">
+                Ya hay pagos registrados, por eso no se puede editar ni
+                eliminar.
+              </p>
+            )}
+
+            <div className="mt-5">
+              <p className="text-sm font-semibold text-slate-900 mb-2">
+                Quién debe pagar
+              </p>
+
+              {otrosParticipantes.length === 0 ? (
+                <p className="text-sm text-slate-500">No hay participantes.</p>
+              ) : (
+                <div className="space-y-3">
+                  {otrosParticipantes.map((item) => {
+                    const loadingId = `${expense.id}-${item.user_id}`;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      >
+                        <div className="flex justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900">
+                              {obtenerNombre(item.user_id)}
+                            </p>
+
+                            <p className="text-sm text-slate-600 mt-1">
+                              Debe pagar: {formatearMonto(item.amount)}
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            {!item.accepted ? (
+                              <span className="text-xs font-semibold text-amber-700">
+                                Falta aceptar
+                              </span>
+                            ) : !item.paid ? (
+                              <span className="text-xs font-semibold text-red-700">
+                                Falta pagar
+                              </span>
+                            ) : item.payment_confirmed ? (
+                              <span className="text-xs font-semibold text-emerald-700">
+                                ✓ Confirmado
+                              </span>
+                            ) : (
+                              <span className="text-xs font-semibold text-blue-700">
+                                Pago por confirmar
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {item.paid && (
+                          <div className="mt-3 rounded-xl bg-white border border-slate-200 p-3">
+                            <p className="text-sm text-slate-700">
+                              Pago registrado:{" "}
+                              {formatearMonto(
+                                item.payment_amount || item.amount
+                              )}
+                            </p>
+
+                            {item.payment_at && (
+                              <p className="text-xs text-slate-500 mt-1">
+                                {formatearFechaHora(item.payment_at)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {item.paid && item.payment_evidence_url && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              verComprobanteGastoCompartido(
+                                item.payment_evidence_url
+                              )
+                            }
+                            className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
+                          >
+                            Ver comprobante
+                          </button>
+                        )}
+
+                        {item.paid && !item.payment_confirmed && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              confirmarPagoGastoCompartido(
+                                expense.id,
+                                item.user_id
+                              )
+                            }
+                            disabled={responseLoading === loadingId}
+                            className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                          >
+                            {responseLoading === loadingId
+                              ? "Confirmando..."
+                              : "Confirmar pago recibido"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   // ============================================================
   // CARGANDO
@@ -1483,9 +1914,7 @@ export default function Home() {
                           Fecha del registro: {formatearFecha(loan.created_at)}
                         </p>
 
-                        <p>
-                          Fecha límite: {formatearFecha(loan.due_date)}
-                        </p>
+                        <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
                       </div>
 
                       <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
@@ -1494,8 +1923,8 @@ export default function Home() {
                         </p>
 
                         <p className="text-sm text-amber-800 mt-1">
-                          {obtenerNombre(loan.borrower_id)} todavía no ha aceptado
-                          este préstamo.
+                          {obtenerNombre(loan.borrower_id)} todavía no ha
+                          aceptado este préstamo.
                         </p>
                       </div>
                     </div>
@@ -1503,6 +1932,7 @@ export default function Home() {
                 </div>
               </section>
             )}
+
             {/* PRÉSTAMOS POR CONFIRMAR */}
 
             {prestamosPorConfirmar.length > 0 && (
@@ -1768,9 +2198,7 @@ export default function Home() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">
-                    {editingExpenseId
-                      ? "Editar gasto"
-                      : "Gastos compartidos"}
+                    {editingExpenseId ? "Editar gasto" : "Gastos compartidos"}
                   </h2>
 
                   <p className="text-sm text-slate-700 mt-1">
@@ -1905,9 +2333,12 @@ export default function Home() {
                           </p>
 
                           <p className="text-sm text-slate-700 mt-2">
-                            Tu parte: {formatearMonto(
+                            Tu parte:{" "}
+                            {formatearMonto(
                               Number(sharedExpenseTotal || 0) -
-                              obtenerCantidadCompartida(sharedExpenseUsers[0]) *
+                              obtenerCantidadCompartida(
+                                sharedExpenseUsers[0]
+                              ) *
                               sharedExpenseUsers.length
                             )}
                           </p>
@@ -1980,7 +2411,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* SOLICITUDES */}
+            {/* SOLICITUDES POR CONFIRMAR */}
 
             {gastosPendientes.length > 0 && (
               <section>
@@ -2055,336 +2486,48 @@ export default function Home() {
               </section>
             )}
 
-            {/* MIS GASTOS */}
+            {/* GASTOS QUE YO CREÉ */}
 
             <section>
-              <h2 className="text-lg font-bold text-slate-900 mb-3">
-                Mis gastos compartidos
+              <h2 className="text-lg font-bold text-slate-900 mb-1">
+                💰 Gastos que yo creé
               </h2>
 
-              {misGastosCompartidos.length === 0 ? (
+              <p className="text-sm text-slate-600 mb-3">
+                Yo pagué y me deben su parte.
+              </p>
+
+              {gastosQueCobro.length === 0 ? (
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
                   <p className="text-slate-700">
-                    Todavía no tienes gastos compartidos.
+                    No tienes gastos creados por cobrar.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {misGastosCompartidos.map((expense) => {
-                    const soyCreador = expense.created_by === currentUserId;
+                  {gastosQueCobro.map(renderGastoCompartido)}
+                </div>
+              )}
+            </section>
 
-                    const miParticipacion = sharedParticipants.find(
-                      (item) =>
-                        item.expense_id === expense.id &&
-                        item.user_id === currentUserId
-                    );
+            {/* GASTOS QUE ME COBRAN */}
 
-                    const otrosParticipantes = sharedParticipants.filter(
-                      (item) =>
-                        item.expense_id === expense.id &&
-                        item.user_id !== currentUserId
-                    );
+            <section>
+              <h2 className="text-lg font-bold text-slate-900 mb-1">
+                🧾 Gastos que me cobran
+              </h2>
 
-                    const tienePagos = gastoTienePagos(expense.id);
+              <p className="text-sm text-slate-600 mb-3">
+                Otra persona pagó y yo debo mi parte.
+              </p>
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
-                            </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              Total: {formatearMonto(expense.total_amount)}
-                            </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              Pagó el total: {obtenerNombre(expense.created_by)}
-                            </p>
-                          </div>
-
-                          <span
-                            className={`inline-flex h-fit rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "active"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : expense.status === "pending"
-                                ? "bg-amber-100 text-amber-700"
-                                : expense.status === "completed"
-                                  ? "bg-blue-100 text-blue-700"
-                                  : "bg-red-100 text-red-700"
-                              }`}
-                          >
-                            {expense.status === "active"
-                              ? "Activo"
-                              : expense.status === "pending"
-                                ? "Pendiente"
-                                : expense.status === "completed"
-                                  ? "Completado"
-                                  : "Cancelado"}
-                          </span>
-                        </div>
-
-                        {expense.description && (
-                          <p className="text-sm text-slate-700 mt-3">
-                            {expense.description}
-                          </p>
-                        )}
-
-                        {/* SI YO SOY PARTICIPANTE */}
-
-                        {!soyCreador && miParticipacion && (
-                          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-sm font-semibold text-slate-900">
-                              Mi parte
-                            </p>
-
-                            <p className="text-2xl font-bold text-slate-900 mt-1">
-                              {formatearMonto(miParticipacion.amount)}
-                            </p>
-
-                            {!miParticipacion.accepted && (
-                              <p className="text-sm text-amber-700 mt-2">
-                                Falta aceptar la solicitud.
-                              </p>
-                            )}
-
-                            {miParticipacion.accepted &&
-                              !miParticipacion.paid && (
-                                <>
-                                  <p className="text-sm text-red-700 mt-2">
-                                    Falta registrar tu pago.
-                                  </p>
-
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      abrirPagoGastoCompartido(
-                                        expense,
-                                        miParticipacion
-                                      )
-                                    }
-                                    className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                                  >
-                                    Registrar mi pago
-                                  </button>
-                                </>
-                              )}
-
-                            {miParticipacion.paid && (
-                              <div className="mt-3">
-                                <p className="text-sm text-emerald-700 font-semibold">
-                                  ✓ Pago registrado
-                                </p>
-
-                                {miParticipacion.payment_amount && (
-                                  <p className="text-sm text-slate-700 mt-1">
-                                    Pagaste:{" "}
-                                    {formatearMonto(
-                                      miParticipacion.payment_amount
-                                    )}
-                                  </p>
-                                )}
-
-                                {miParticipacion.payment_confirmed ? (
-                                  <p className="text-sm text-emerald-700 mt-2 font-semibold">
-                                    ✓ El pago fue confirmado.
-                                  </p>
-                                ) : (
-                                  <p className="text-sm text-amber-700 mt-2">
-                                    Esperando confirmación de quien pagó el
-                                    gasto.
-                                  </p>
-                                )}
-
-                                {miParticipacion.payment_evidence_url && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      verComprobanteGastoCompartido(
-                                        miParticipacion.payment_evidence_url
-                                      )
-                                    }
-                                    className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
-                                  >
-                                    Ver mi comprobante
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* SI YO SOY EL CREADOR */}
-
-                        {soyCreador && (
-                          <>
-                            <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                              <p className="text-sm text-slate-700">
-                                Tu parte: <span className="font-bold text-slate-900">
-                                  {formatearMonto(obtenerMiParteGasto(expense))}
-                                </span>
-                              </p>
-
-                              <p className="text-sm text-slate-700 mt-1">
-                                Tú pagaste el total de este gasto por adelantado.
-                              </p>
-
-                              <p className="text-sm text-slate-700 mt-1">
-                                Los participantes deben aceptar y después
-                                pagarte su parte.
-                              </p>
-                            </div>
-
-                            {!tienePagos &&
-                              expense.status !== "completed" &&
-                              expense.status !== "cancelled" && (
-                                <div className="grid grid-cols-2 gap-2 mt-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => iniciarEdicionGasto(expense)}
-                                    className="rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
-                                  >
-                                    ✏️ Editar
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => setExpenseToDelete(expense)}
-                                    className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold"
-                                  >
-                                    🗑️ Eliminar
-                                  </button>
-                                </div>
-                              )}
-
-                            {tienePagos && (
-                              <p className="text-xs text-slate-500 mt-3">
-                                Ya hay pagos registrados, por eso no se puede
-                                editar ni eliminar.
-                              </p>
-                            )}
-
-                            <div className="mt-5">
-                              <p className="text-sm font-semibold text-slate-900 mb-2">
-                                Quién debe pagar
-                              </p>
-
-                              {otrosParticipantes.length === 0 ? (
-                                <p className="text-sm text-slate-500">
-                                  No hay participantes.
-                                </p>
-                              ) : (
-                                <div className="space-y-3">
-                                  {otrosParticipantes.map((item) => {
-                                    const loadingId = `${expense.id}-${item.user_id}`;
-
-                                    return (
-                                      <div
-                                        key={item.id}
-                                        className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                                      >
-                                        <div className="flex justify-between gap-3">
-                                          <div>
-                                            <p className="font-semibold text-slate-900">
-                                              {obtenerNombre(item.user_id)}
-                                            </p>
-
-                                            <p className="text-sm text-slate-600 mt-1">
-                                              Debe pagar:{" "}
-                                              {formatearMonto(item.amount)}
-                                            </p>
-                                          </div>
-
-                                          <div className="text-right">
-                                            {!item.accepted ? (
-                                              <span className="text-xs font-semibold text-amber-700">
-                                                Falta aceptar
-                                              </span>
-                                            ) : !item.paid ? (
-                                              <span className="text-xs font-semibold text-red-700">
-                                                Falta pagar
-                                              </span>
-                                            ) : item.payment_confirmed ? (
-                                              <span className="text-xs font-semibold text-emerald-700">
-                                                ✓ Confirmado
-                                              </span>
-                                            ) : (
-                                              <span className="text-xs font-semibold text-blue-700">
-                                                Pago por confirmar
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-
-                                        {item.paid && (
-                                          <div className="mt-3 rounded-xl bg-white border border-slate-200 p-3">
-                                            <p className="text-sm text-slate-700">
-                                              Pago registrado:{" "}
-                                              {formatearMonto(
-                                                item.payment_amount ||
-                                                item.amount
-                                              )}
-                                            </p>
-
-                                            {item.payment_at && (
-                                              <p className="text-xs text-slate-500 mt-1">
-                                                {formatearFechaHora(
-                                                  item.payment_at
-                                                )}
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {item.paid &&
-                                          item.payment_evidence_url && (
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                verComprobanteGastoCompartido(
-                                                  item.payment_evidence_url
-                                                )
-                                              }
-                                              className="w-full mt-3 rounded-2xl bg-white border border-slate-300 text-slate-800 py-3 font-semibold"
-                                            >
-                                              Ver comprobante
-                                            </button>
-                                          )}
-
-                                        {item.paid &&
-                                          !item.payment_confirmed && (
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                confirmarPagoGastoCompartido(
-                                                  expense.id,
-                                                  item.user_id
-                                                )
-                                              }
-                                              disabled={
-                                                responseLoading === loadingId
-                                              }
-                                              className="w-full mt-2 rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
-                                            >
-                                              {responseLoading === loadingId
-                                                ? "Confirmando..."
-                                                : "Confirmar pago recibido"}
-                                            </button>
-                                          )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
+              {gastosQuePago.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
+                  <p className="text-slate-700">No tienes gastos por pagar.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {gastosQuePago.map(renderGastoCompartido)}
                 </div>
               )}
             </section>
@@ -2396,280 +2539,342 @@ export default function Home() {
         ==================================================== */}
 
         {activeTab === "historial" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
+            {/* FILTROS */}
+
+            <section className="bg-white rounded-3xl border border-slate-200 p-4 space-y-3">
+              <input
+                type="text"
+                placeholder="🔍 Buscar por nombre, concepto o monto"
+                value={histTexto}
+                onChange={(event) => setHistTexto(event.target.value)}
+                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
+              />
+
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs font-medium text-slate-600">
+                  Desde
+                  <input
+                    type="date"
+                    value={histDesde}
+                    onChange={(event) => setHistDesde(event.target.value)}
+                    className="mt-1 w-full rounded-2xl border border-slate-300 px-3 py-2.5 text-slate-900"
+                  />
+                </label>
+
+                <label className="text-xs font-medium text-slate-600">
+                  Hasta
+                  <input
+                    type="date"
+                    value={histHasta}
+                    onChange={(event) => setHistHasta(event.target.value)}
+                    className="mt-1 w-full rounded-2xl border border-slate-300 px-3 py-2.5 text-slate-900"
+                  />
+                </label>
+              </div>
+
+              {hayFiltros && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistTexto("");
+                    setHistDesde("");
+                    setHistHasta("");
+                  }}
+                  className="text-sm font-semibold text-slate-700"
+                >
+                  Limpiar filtros
+                </button>
+              )}
+            </section>
+
             {/* HISTORIAL PRÉSTAMOS */}
 
-            <section>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">
-                Historial de préstamos
-              </h2>
-
-              {historialPrestamos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">
-                    No hay préstamos en el historial.
-                  </p>
-                </div>
+            <Acordeon
+              titulo="Historial de préstamos"
+              cuenta={historialPrestamosFiltrado.length}
+              abierto={histAbierto.prestamos}
+              onToggle={() =>
+                setHistAbierto((current) => ({
+                  ...current,
+                  prestamos: !current.prestamos,
+                }))
+              }
+            >
+              {historialPrestamosFiltrado.length === 0 ? (
+                <p className="text-slate-700 text-center py-4">
+                  No hay préstamos en el historial.
+                </p>
               ) : (
-                <div className="space-y-3">
-                  {historialPrestamos.map((loan) => {
-                    const payment = payments.find(
-                      (item) => item.loan_id === loan.id
-                    );
+                historialPrestamosFiltrado.map((loan) => {
+                  const payment = payments.find(
+                    (item) => item.loan_id === loan.id
+                  );
+                  const cobre = loan.lender_id === currentUserId;
 
-                    return (
-                      <div
-                        key={loan.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {loan.lender_id === currentUserId
-                                ? `Le prestaste a ${obtenerNombre(
-                                  loan.borrower_id
-                                )}`
-                                : `Te prestó ${obtenerNombre(loan.lender_id)}`}
-                            </p>
+                  return (
+                    <div
+                      key={loan.id}
+                      className="rounded-3xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${cobre
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-blue-100 text-blue-700"
+                            }`}
+                        >
+                          {cobre ? "💰 Cobré" : "💸 Pagué"}
+                        </span>
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              {loan.description || "Préstamo"}
-                            </p>
-                          </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${loan.status === "completed"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : loan.status === "rejected"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-slate-100 text-slate-700"
+                            }`}
+                        >
+                          {loan.status === "completed"
+                            ? "Completado"
+                            : loan.status === "rejected"
+                              ? "Rechazado"
+                              : "Cancelado"}
+                        </span>
+                      </div>
 
-                          <p className="font-bold text-slate-900 whitespace-nowrap">
-                            {formatearMonto(loan.amount)}
+                      <div className="flex justify-between gap-4">
+                        <div>
+                          <p className="font-semibold text-slate-900">
+                            {cobre
+                              ? `Le prestaste a ${obtenerNombre(
+                                loan.borrower_id
+                              )}`
+                              : `Te prestó ${obtenerNombre(loan.lender_id)}`}
+                          </p>
+
+                          <p className="text-sm text-slate-700 mt-1">
+                            {loan.description || "Préstamo"}
                           </p>
                         </div>
 
-                        <div className="mt-3">
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-sm ${loan.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : loan.status === "rejected"
-                                ? "bg-red-100 text-red-700"
-                                : "bg-slate-100 text-slate-700"
-                              }`}
-                          >
-                            {loan.status === "completed"
-                              ? "Completado"
-                              : loan.status === "rejected"
-                                ? "Rechazado"
-                                : "Cancelado"}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 text-sm text-slate-700 space-y-1">
-                          <p>Registrado: {formatearFecha(loan.created_at)}</p>
-
-                          <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
-                        </div>
-
-                        {payment && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="font-semibold text-slate-900">
-                              Información del pago
-                            </p>
-
-                            <div className="mt-2 text-sm text-slate-700 space-y-1">
-                              <p>Pagado por: {obtenerNombre(payment.paid_by)}</p>
-
-                              <p>
-                                Monto pagado: {formatearMonto(payment.amount)}
-                              </p>
-
-                              <p>
-                                Fecha del pago:{" "}
-                                {formatearFechaHora(payment.created_at)}
-                              </p>
-
-                              <p>
-                                Recepción:{" "}
-                                {payment.receiver_confirmed
-                                  ? "Confirmada"
-                                  : "Pendiente"}
-                              </p>
-                            </div>
-
-                            {payment.evidence_url && (
-                              <button
-                                onClick={() =>
-                                  verComprobante(payment.evidence_url)
-                                }
-                                className="w-full mt-4 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                              >
-                                Ver comprobante
-                              </button>
-                            )}
-                          </div>
-                        )}
+                        <p className="font-bold text-slate-900 whitespace-nowrap">
+                          {formatearMonto(loan.amount)}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      <div className="mt-3 text-sm text-slate-700 space-y-1">
+                        <p>Registrado: {formatearFecha(loan.created_at)}</p>
+
+                        <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
+                      </div>
+
+                      {payment && (
+                        <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700 space-y-1">
+                          <p className="font-semibold text-slate-900">
+                            Información del pago
+                          </p>
+
+                          <p>Pagado por: {obtenerNombre(payment.paid_by)}</p>
+
+                          <p>Monto: {formatearMonto(payment.amount)}</p>
+
+                          <p>Fecha: {formatearFechaHora(payment.created_at)}</p>
+
+                          {payment.evidence_url && (
+                            <button
+                              onClick={() =>
+                                verComprobante(payment.evidence_url)
+                              }
+                              className="w-full mt-2 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                            >
+                              Ver comprobante
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
-            </section>
+            </Acordeon>
 
             {/* HISTORIAL GASTOS */}
 
-            <section>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">
-                Historial de gastos
-              </h2>
-
-              {historialGastos.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-6 text-center">
-                  <p className="text-slate-700">No hay gastos terminados.</p>
-                </div>
+            <Acordeon
+              titulo="Historial de gastos"
+              cuenta={historialGastosFiltrado.length}
+              abierto={histAbierto.gastos}
+              onToggle={() =>
+                setHistAbierto((current) => ({
+                  ...current,
+                  gastos: !current.gastos,
+                }))
+              }
+            >
+              {historialGastosFiltrado.length === 0 ? (
+                <p className="text-slate-700 text-center py-4">
+                  No hay gastos terminados.
+                </p>
               ) : (
-                <div className="space-y-3">
-                  {historialGastos.map((expense) => {
-                    const participants = sharedParticipants.filter(
-                      (item) => item.expense_id === expense.id
-                    );
+                historialGastosFiltrado.map((expense) => {
+                  const participants = sharedParticipants.filter(
+                    (item) => item.expense_id === expense.id
+                  );
+                  const soyCreador = expense.created_by === currentUserId;
+                  const miParticipacion = participants.find(
+                    (item) => item.user_id === currentUserId
+                  );
 
-                    const miParticipacion = participants.find(
-                      (item) => item.user_id === currentUserId
-                    );
+                  return (
+                    <div
+                      key={expense.id}
+                      className="rounded-3xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${soyCreador
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-blue-100 text-blue-700"
+                            }`}
+                        >
+                          {soyCreador ? "💰 Cobré" : "💸 Pagué"}
+                        </span>
 
-                    return (
-                      <div
-                        key={expense.id}
-                        className="bg-white rounded-3xl border border-slate-200 p-5"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {expense.title}
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "completed"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-red-100 text-red-700"
+                            }`}
+                        >
+                          {expense.status === "completed"
+                            ? "Completado"
+                            : "Cancelado"}
+                        </span>
+                      </div>
+
+                      <p className="font-semibold text-slate-900">
+                        {expense.title}
+                      </p>
+
+                      <p className="text-sm text-slate-700 mt-1">
+                        Total: {formatearMonto(expense.total_amount)}
+                      </p>
+
+                      <p className="text-sm text-slate-700 mt-1">
+                        Pagó el total: {obtenerNombre(expense.created_by)}
+                      </p>
+
+                      <p className="text-xs text-slate-500 mt-1">
+                        {formatearFecha(expense.created_at)}
+                      </p>
+
+                      {/* SI YO PAGUÉ MI PARTE: un solo comprobante, aquí */}
+
+                      {!soyCreador && miParticipacion && (
+                        <div className="mt-3 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                          <p className="font-semibold text-slate-900">
+                            Tu parte
+                          </p>
+
+                          <p className="text-xl font-bold text-slate-900 mt-1">
+                            {formatearMonto(miParticipacion.amount)}
+                          </p>
+
+                          {miParticipacion.payment_confirmed ? (
+                            <p className="text-sm text-emerald-700 mt-2">
+                              ✓ Pago registrado y confirmado
                             </p>
-
-                            <p className="text-sm text-slate-700 mt-1">
-                              Total: {formatearMonto(expense.total_amount)}
+                          ) : miParticipacion.paid ? (
+                            <p className="text-sm text-blue-700 mt-2">
+                              ✓ Pago registrado
                             </p>
+                          ) : null}
 
-                            <p className="text-sm text-slate-700 mt-1">
-                              Pagó el total: {obtenerNombre(expense.created_by)}
-                            </p>
-                          </div>
-
-                          <span
-                            className={`inline-flex h-fit rounded-full px-3 py-1 text-sm ${expense.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-red-100 text-red-700"
-                              }`}
-                          >
-                            {expense.status === "completed"
-                              ? "Completado"
-                              : "Cancelado"}
-                          </span>
+                          {miParticipacion.payment_evidence_url && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                verComprobanteGastoCompartido(
+                                  miParticipacion.payment_evidence_url
+                                )
+                              }
+                              className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                            >
+                              Ver comprobante
+                            </button>
+                          )}
                         </div>
+                      )}
 
-                        {miParticipacion && (
-                          <div className="mt-4 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="font-semibold text-slate-900">
-                              Tu parte
-                            </p>
+                      {/* SI YO COBRÉ: quién pagó, cada uno con su comprobante */}
 
-                            <p className="text-xl font-bold text-slate-900 mt-1">
-                              {formatearMonto(miParticipacion.amount)}
-                            </p>
+                      {soyCreador && participants.length > 0 && (
+                        <div className="mt-3">
+                          <p className="text-sm font-semibold text-slate-900 mb-2">
+                            Quién me pagó
+                          </p>
 
-                            {miParticipacion.paid && (
-                              <p className="text-sm text-emerald-700 mt-2">
-                                ✓ Pago registrado
-                              </p>
-                            )}
-
-                            {miParticipacion.payment_confirmed && (
-                              <p className="text-sm text-emerald-700 mt-1">
-                                ✓ Pago confirmado
-                              </p>
-                            )}
-
-                            {miParticipacion.payment_evidence_url && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  verComprobanteGastoCompartido(
-                                    miParticipacion.payment_evidence_url
-                                  )
-                                }
-                                className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                          <div className="space-y-2">
+                            {participants.map((item) => (
+                              <div
+                                key={item.id}
+                                className="rounded-2xl border border-slate-200 bg-slate-50 p-3"
                               >
-                                Ver comprobante
-                              </button>
-                            )}
-                          </div>
-                        )}
+                                <div className="flex justify-between gap-3">
+                                  <div>
+                                    <p className="font-semibold text-slate-900">
+                                      {obtenerNombre(item.user_id)}
+                                    </p>
 
-                        {participants.length > 0 && (
-                          <div className="mt-4">
-                            <p className="text-sm font-semibold text-slate-900 mb-2">
-                              Participantes
-                            </p>
-
-                            <div className="space-y-2">
-                              {participants.map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-3"
-                                >
-                                  <div className="flex justify-between gap-3">
-                                    <div>
-                                      <p className="font-semibold text-slate-900">
-                                        {obtenerNombre(item.user_id)}
-                                      </p>
-
-                                      <p className="text-sm text-slate-600 mt-1">
-                                        Parte: {formatearMonto(item.amount)}
-                                      </p>
-                                    </div>
-
-                                    <div className="text-right">
-                                      {item.payment_confirmed ? (
-                                        <span className="text-xs font-semibold text-emerald-700">
-                                          ✓ Confirmado
-                                        </span>
-                                      ) : item.paid ? (
-                                        <span className="text-xs font-semibold text-blue-700">
-                                          Pagó
-                                        </span>
-                                      ) : item.accepted ? (
-                                        <span className="text-xs font-semibold text-red-700">
-                                          Falta pagar
-                                        </span>
-                                      ) : (
-                                        <span className="text-xs font-semibold text-amber-700">
-                                          No aceptó
-                                        </span>
-                                      )}
-                                    </div>
+                                    <p className="text-sm text-slate-600 mt-1">
+                                      Parte: {formatearMonto(item.amount)}
+                                    </p>
                                   </div>
 
-                                  {item.payment_evidence_url && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        verComprobanteGastoCompartido(
-                                          item.payment_evidence_url
-                                        )
-                                      }
-                                      className="w-full mt-3 rounded-xl bg-white border border-slate-300 text-slate-800 py-2.5 text-sm font-semibold"
-                                    >
-                                      Ver comprobante
-                                    </button>
-                                  )}
+                                  <span
+                                    className={`text-xs font-semibold ${item.payment_confirmed
+                                      ? "text-emerald-700"
+                                      : item.paid
+                                        ? "text-blue-700"
+                                        : item.accepted
+                                          ? "text-red-700"
+                                          : "text-amber-700"
+                                      }`}
+                                  >
+                                    {item.payment_confirmed
+                                      ? "✓ Confirmado"
+                                      : item.paid
+                                        ? "Pagó"
+                                        : item.accepted
+                                          ? "Falta pagar"
+                                          : "No aceptó"}
+                                  </span>
                                 </div>
-                              ))}
-                            </div>
+
+                                {item.payment_evidence_url && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      verComprobanteGastoCompartido(
+                                        item.payment_evidence_url
+                                      )
+                                    }
+                                    className="w-full mt-3 rounded-xl bg-white border border-slate-300 text-slate-800 py-2.5 text-sm font-semibold"
+                                  >
+                                    Ver comprobante
+                                  </button>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
-            </section>
+            </Acordeon>
           </div>
         )}
       </div>
