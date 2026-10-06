@@ -11,6 +11,7 @@ import {
   verComprobante as verComprobanteService,
   editarPrestamo as editarPrestamoService,
   eliminarPrestamo as eliminarPrestamoService,
+  rechazarPago as rechazarPagoService,
 } from "../lib/prestamos";
 
 import {
@@ -21,6 +22,7 @@ import {
   registrarPagoGastoCompartido as registrarPagoGastoCompartidoService,
   confirmarPagoGastoCompartido as confirmarPagoGastoCompartidoService,
   verComprobanteGastoCompartido as verComprobanteGastoCompartidoService,
+  rechazarPagoGastoCompartido as rechazarPagoGastoCompartidoService,
 } from "../lib/gastos";
 
 type Profile = {
@@ -48,6 +50,7 @@ type Loan = {
   | "cancelled";
   created_at: string;
   updated_at: string;
+  payment_rejected?: boolean;
 };
 
 type Payment = {
@@ -80,6 +83,7 @@ type SharedExpenseParticipant = {
   accepted: boolean;
   accepted_at: string | null;
   rejected?: boolean;
+  payment_rejected?: boolean;
   paid: boolean;
   payment_amount: number | null;
   payment_evidence_url: string | null;
@@ -214,6 +218,19 @@ export default function Home() {
   const [editingLoanId, setEditingLoanId] = useState<string | null>(null);
   const [loanToDelete, setLoanToDelete] = useState<Loan | null>(null);
   const [loanDeleteLoading, setLoanDeleteLoading] = useState(false);
+
+  // Rechazo de comprobantes (préstamos y gastos compartidos)
+  const [paymentToReject, setPaymentToReject] = useState<
+    | { kind: "loan"; loanId: string; payerName: string }
+    | {
+      kind: "expense";
+      expenseId: string;
+      participantUserId: string;
+      payerName: string;
+    }
+    | null
+  >(null);
+  const [rejectPaymentLoading, setRejectPaymentLoading] = useState(false);
 
   const [paymentLoan, setPaymentLoan] = useState<Loan | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
@@ -691,6 +708,47 @@ export default function Home() {
       );
     } finally {
       setLoanDeleteLoading(false);
+    }
+  }
+
+  async function confirmarRechazoPago() {
+    if (!paymentToReject) return;
+
+    const target = paymentToReject;
+
+    try {
+      setRejectPaymentLoading(true);
+
+      if (target.kind === "loan") {
+        await rechazarPagoService(target.loanId);
+      } else {
+        await rechazarPagoGastoCompartidoService(
+          target.expenseId,
+          target.participantUserId
+        );
+      }
+
+      setPaymentToReject(null);
+
+      await loadData();
+
+      mostrarModal(
+        "Comprobante rechazado",
+        `${target.payerName} deberá subir un nuevo comprobante.`,
+        "info"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      setPaymentToReject(null);
+
+      mostrarModal(
+        "No se pudo rechazar",
+        error?.message || "Ocurrió un error.",
+        "error"
+      );
+    } finally {
+      setRejectPaymentLoading(false);
     }
   }
 
@@ -1627,6 +1685,19 @@ export default function Home() {
               !miParticipacion.paid &&
               (todosAceptaron(expense.id) ? (
                 <>
+                  {miParticipacion.payment_rejected && (
+                    <div className="mt-3 rounded-2xl bg-red-50 border border-red-200 p-3">
+                      <p className="text-sm font-semibold text-red-800">
+                        Comprobante rechazado
+                      </p>
+
+                      <p className="text-sm text-red-700 mt-1">
+                        {obtenerNombre(expense.created_by)} no aceptó tu
+                        comprobante. Sube uno nuevo.
+                      </p>
+                    </div>
+                  )}
+
                   <p className="text-sm text-red-700 mt-2">
                     Todos aceptaron. Falta registrar tu pago.
                   </p>
@@ -1638,7 +1709,9 @@ export default function Home() {
                     }
                     className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
                   >
-                    Registrar mi pago
+                    {miParticipacion.payment_rejected
+                      ? "Subir nuevo comprobante"
+                      : "Registrar mi pago"}
                   </button>
                 </>
               ) : (
@@ -1801,7 +1874,9 @@ export default function Home() {
                             ) : !item.paid ? (
                               <span className="text-xs font-semibold text-red-700">
                                 {todosAceptaron(expense.id)
-                                  ? "Falta pagar"
+                                  ? item.payment_rejected
+                                    ? "Comprobante rechazado · falta nuevo"
+                                    : "Falta pagar"
                                   : "Esperando a los demás"}
                               </span>
                             ) : item.payment_confirmed ? (
@@ -1862,6 +1937,24 @@ export default function Home() {
                             {responseLoading === loadingId
                               ? "Confirmando..."
                               : "Confirmar pago recibido"}
+                          </button>
+                        )}
+
+                        {item.paid && !item.payment_confirmed && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPaymentToReject({
+                                kind: "expense",
+                                expenseId: expense.id,
+                                participantUserId: item.user_id,
+                                payerName: obtenerNombre(item.user_id),
+                              })
+                            }
+                            disabled={responseLoading === loadingId}
+                            className="w-full mt-2 rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                          >
+                            Rechazar comprobante
                           </button>
                         )}
                       </div>
@@ -2251,6 +2344,7 @@ export default function Home() {
                   {misPrestamos.map((loan) => {
                     const soyPrestamista = loan.lender_id === currentUserId;
                     const soyDeudor = loan.borrower_id === currentUserId;
+                    const comprobanteRechazado = loan.payment_rejected === true;
 
                     return (
                       <div
@@ -2284,19 +2378,39 @@ export default function Home() {
                         </div>
 
                         <div className="mt-4">
+                          {soyDeudor && comprobanteRechazado && (
+                            <div className="mb-3 rounded-2xl bg-red-50 border border-red-200 p-3">
+                              <p className="text-sm font-semibold text-red-800">
+                                Comprobante rechazado
+                              </p>
+
+                              <p className="text-sm text-red-700 mt-1">
+                                {obtenerNombre(loan.lender_id)} no aceptó tu
+                                comprobante. Sube uno nuevo.
+                              </p>
+                            </div>
+                          )}
+
                           {soyDeudor && (
                             <button
                               onClick={() => abrirRegistroPago(loan)}
                               className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
                             >
-                              Registrar pago
+                              {comprobanteRechazado
+                                ? "Subir nuevo comprobante"
+                                : "Registrar pago"}
                             </button>
                           )}
 
                           {soyPrestamista && (
                             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
-                              Esperando el pago de{" "}
-                              {obtenerNombre(loan.borrower_id)}.
+                              {comprobanteRechazado
+                                ? `Rechazaste el comprobante. Esperando que ${obtenerNombre(
+                                  loan.borrower_id
+                                )} suba uno nuevo.`
+                                : `Esperando el pago de ${obtenerNombre(
+                                  loan.borrower_id
+                                )}.`}
                             </div>
                           )}
                         </div>
@@ -2386,7 +2500,8 @@ export default function Home() {
 
                           <p className="text-sm text-amber-800 mt-1">
                             Confirma la recepción solamente si efectivamente
-                            recibiste este pago.
+                            recibiste este pago. Si el comprobante no es
+                            correcto, recházalo para que lo vuelva a subir.
                           </p>
                         </div>
 
@@ -2407,6 +2522,21 @@ export default function Home() {
                           {responseLoading === loan.id
                             ? "Confirmando..."
                             : "Confirmar que recibí el pago"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPaymentToReject({
+                              kind: "loan",
+                              loanId: loan.id,
+                              payerName: obtenerNombre(loan.borrower_id),
+                            })
+                          }
+                          disabled={responseLoading === loan.id}
+                          className="w-full mt-2 rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                        >
+                          Rechazar comprobante
                         </button>
                       </div>
                     );
@@ -3271,6 +3401,44 @@ export default function Home() {
                 className="rounded-2xl bg-red-600 text-white py-3 font-semibold disabled:opacity-50"
               >
                 {loanDeleteLoading ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
+          MODAL CONFIRMAR RECHAZO DE COMPROBANTE
+      ====================================================== */}
+
+      {paymentToReject && (
+        <div className="fixed inset-0 z-[55] bg-black/40 flex items-center justify-center px-5">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-slate-900">
+              ¿Rechazar comprobante?
+            </h3>
+
+            <p className="text-slate-700 mt-2">
+              {paymentToReject.payerName} tendrá que subir un nuevo
+              comprobante. Úsalo si el comprobante no es válido o el pago no
+              llegó.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 mt-5">
+              <button
+                onClick={() => setPaymentToReject(null)}
+                disabled={rejectPaymentLoading}
+                className="rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={confirmarRechazoPago}
+                disabled={rejectPaymentLoading}
+                className="rounded-2xl bg-red-600 text-white py-3 font-semibold disabled:opacity-50"
+              >
+                {rejectPaymentLoading ? "Rechazando..." : "Sí, rechazar"}
               </button>
             </div>
           </div>

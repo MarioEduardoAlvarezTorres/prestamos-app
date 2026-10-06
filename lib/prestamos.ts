@@ -139,6 +139,7 @@ export async function registrarPago(params: {
     .from("loans")
     .update({
       status: "payment_pending",
+      payment_rejected: false,
       updated_at: new Date().toISOString(),
     })
     .eq("id", params.loanId);
@@ -254,4 +255,14 @@ export async function eliminarPrestamo(loanId: string) {
   if (!data || data.length === 0) {
     throw new Error("No se pudo eliminar el préstamo.");
   }
+}
+
+export async function rechazarPago(loanId: string) {
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("rechazar_pago_prestamo", {
+    p_loan_id: loanId,
+  });
+
+  if (error) throw error;
 }

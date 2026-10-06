@@ -176,3 +176,17 @@ export async function verComprobanteGastoCompartido(
 
   return data.signedUrl;
 }
+
+export async function rechazarPagoGastoCompartido(
+  expenseId: string,
+  participantUserId: string
+) {
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("rechazar_pago_gasto_compartido", {
+    p_expense_id: expenseId,
+    p_participant_user_id: participantUserId,
+  });
+
+  if (error) throw error;
+}
