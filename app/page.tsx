@@ -1241,7 +1241,7 @@ export default function Home() {
   const misGastosCompartidos = sharedExpenses.filter((expense) => {
     if (!currentUserId) return false;
 
-    // Los completados y cancelados solo aparecen en Historial
+    // Completados y cancelados solamente aparecen en Historial
     if (
       expense.status === "completed" ||
       expense.status === "cancelled"
@@ -1255,18 +1255,22 @@ export default function Home() {
 
     const soyCreador = expense.created_by === currentUserId;
 
-    // Si todos los participantes ya pagaron,
-    // el gasto deja de mostrarse en Mis gastos.
-    const todosPagaron =
+    // El gasto sigue visible hasta que TODOS los pagos
+    // hayan sido confirmados.
+    const todosLosPagosConfirmados =
       participantes.length > 0 &&
-      participantes.every((participant) => participant.paid);
+      participantes.every(
+        (participant) =>
+          participant.payment_confirmed === true
+      );
 
-    if (todosPagaron) return false;
+    if (todosLosPagosConfirmados) return false;
 
     return (
       soyCreador ||
       participantes.some(
-        (participant) => participant.user_id === currentUserId
+        (participant) =>
+          participant.user_id === currentUserId
       )
     );
   });
@@ -1341,12 +1345,23 @@ export default function Home() {
             </p>
           </div>
 
-          <button
-            onClick={cerrarSesion}
-            className="text-sm text-red-600 font-semibold"
-          >
-            Salir
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="text-sm text-slate-700 font-semibold"
+              aria-label="Actualizar"
+            >
+              ↻ Actualizar
+            </button>
+
+            <button
+              onClick={cerrarSesion}
+              className="text-sm text-red-600 font-semibold"
+            >
+              Salir
+            </button>
+          </div>
         </div>
       </header>
 
