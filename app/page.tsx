@@ -1355,12 +1355,12 @@ export default function Home() {
         participant.expense_id === expense.id &&
         participant.user_id === currentUserId &&
         participant.accepted === true &&
-        participant.paid === false
+        participant.payment_confirmed !== true
     );
   });
 
-  // Historial: gastos terminados, y también aquellos donde YO ya registré
-  // mi pago (aunque los demás todavía no completen el suyo).
+  // Historial: gastos terminados, y también aquellos donde a MÍ ya me
+  // confirmaron mi pago (aunque los demás todavía no completen el suyo).
   const historialGastos = sharedExpenses.filter((expense) => {
     if (expense.status === "completed" || expense.status === "cancelled") {
       return true;
@@ -1372,7 +1372,7 @@ export default function Home() {
       (participant) =>
         participant.expense_id === expense.id &&
         participant.user_id === currentUserId &&
-        participant.paid === true
+        participant.payment_confirmed === true
     );
   });
 
@@ -2803,9 +2803,7 @@ export default function Home() {
                             ? "Completado"
                             : expense.status === "cancelled"
                               ? "Cancelado"
-                              : miParticipacion?.payment_confirmed
-                                ? "Pago confirmado"
-                                : "Pago por confirmar"}
+                              : "Pago confirmado"}
                         </span>
                       </div>
 
