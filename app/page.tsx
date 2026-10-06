@@ -82,7 +82,6 @@ type SharedExpenseParticipant = {
   amount: number;
   accepted: boolean;
   accepted_at: string | null;
-  rejected?: boolean;
   payment_rejected?: boolean;
   paid: boolean;
   payment_amount: number | null;
@@ -1469,8 +1468,7 @@ export default function Home() {
       (participant) =>
         participant.expense_id === expense.id &&
         participant.user_id === currentUserId &&
-        participant.accepted === false &&
-        participant.rejected !== true
+        participant.accepted === false
     );
   });
 
@@ -1789,22 +1787,6 @@ export default function Home() {
               </p>
             </div>
 
-            {otrosParticipantes.some((item) => item.rejected) && (
-              <div className="mt-3 rounded-2xl bg-red-50 border border-red-200 p-3">
-                <p className="text-sm font-semibold text-red-800">
-                  Rechazaron este gasto
-                </p>
-
-                <p className="text-sm text-red-700 mt-1">
-                  {otrosParticipantes
-                    .filter((item) => item.rejected)
-                    .map((item) => obtenerNombre(item.user_id))
-                    .join(", ")}{" "}
-                  rechazó su parte. Modifica el gasto o elimínalo.
-                </p>
-              </div>
-            )}
-
             {!tienePagos &&
               expense.status !== "completed" &&
               expense.status !== "cancelled" && (
@@ -1863,11 +1845,7 @@ export default function Home() {
                           </div>
 
                           <div className="text-right">
-                            {item.rejected ? (
-                              <span className="text-xs font-semibold text-red-700">
-                                Rechazó
-                              </span>
-                            ) : !item.accepted ? (
+                            {!item.accepted ? (
                               <span className="text-xs font-semibold text-amber-700">
                                 Falta aceptar
                               </span>
@@ -2826,29 +2804,18 @@ export default function Home() {
                           </p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 mt-4">
+                        <div className="mt-4">
                           <button
                             type="button"
                             onClick={() =>
                               responderGastoCompartido(expense.id, true)
                             }
                             disabled={responseLoading === expense.id}
-                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                            className="w-full rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                           >
                             {responseLoading === expense.id
                               ? "Guardando..."
                               : "Aceptar"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              responderGastoCompartido(expense.id, false)
-                            }
-                            disabled={responseLoading === expense.id}
-                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
-                          >
-                            Rechazar
                           </button>
                         </div>
                       </div>
