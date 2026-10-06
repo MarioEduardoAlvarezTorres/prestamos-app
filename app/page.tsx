@@ -1425,7 +1425,7 @@ export default function Home() {
 
   const misPrestamos = loans.filter(
     (loan) =>
-      loan.status === "active" &&
+      ["active", "payment_pending"].includes(loan.status) &&
       (loan.lender_id === currentUserId ||
         loan.borrower_id === currentUserId)
   );
@@ -2323,9 +2323,10 @@ export default function Home() {
                     const soyPrestamista = loan.lender_id === currentUserId;
                     const soyDeudor = loan.borrower_id === currentUserId;
                     const comprobanteRechazado = loan.payment_rejected === true;
-
+                    const comprobanteEnRevision = loan.status === "payment_pending";
                     return (
                       <div
+
                         key={loan.id}
                         className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm"
                       >
@@ -2356,6 +2357,20 @@ export default function Home() {
                         </div>
 
                         <div className="mt-4">
+                          {soyDeudor && comprobanteEnRevision && !comprobanteRechazado && (
+                            <div className="mb-3 rounded-2xl bg-amber-50 border border-amber-200 p-3">
+                              <p className="text-sm font-semibold text-amber-900">
+                                Comprobante en revisión
+                              </p>
+
+                              <p className="text-sm text-amber-800 mt-1">
+                                Tu comprobante fue enviado correctamente.{" "}
+                                {obtenerNombre(loan.lender_id)} debe confirmar la recepción
+                                del pago.
+                              </p>
+                            </div>
+                          )}
+
                           {soyDeudor && comprobanteRechazado && (
                             <div className="mb-3 rounded-2xl bg-red-50 border border-red-200 p-3">
                               <p className="text-sm font-semibold text-red-800">
@@ -2369,7 +2384,7 @@ export default function Home() {
                             </div>
                           )}
 
-                          {soyDeudor && (
+                          {soyDeudor && !comprobanteEnRevision && (
                             <button
                               onClick={() => abrirRegistroPago(loan)}
                               className="w-full rounded-2xl bg-slate-900 text-white py-3 font-semibold"
@@ -2382,13 +2397,17 @@ export default function Home() {
 
                           {soyPrestamista && (
                             <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 text-sm text-slate-700">
-                              {comprobanteRechazado
-                                ? `Rechazaste el comprobante. Esperando que ${obtenerNombre(
+                              {comprobanteEnRevision
+                                ? `Comprobante enviado por ${obtenerNombre(
                                   loan.borrower_id
-                                )} suba uno nuevo.`
-                                : `Esperando el pago de ${obtenerNombre(
-                                  loan.borrower_id
-                                )}.`}
+                                )}. Revisa el comprobante para confirmar el pago.`
+                                : comprobanteRechazado
+                                  ? `Rechazaste el comprobante. Esperando que ${obtenerNombre(
+                                    loan.borrower_id
+                                  )} suba uno nuevo.`
+                                  : `Esperando el pago de ${obtenerNombre(
+                                    loan.borrower_id
+                                  )}.`}
                             </div>
                           )}
                         </div>
