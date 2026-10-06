@@ -175,3 +175,83 @@ export async function verComprobante(path: string) {
 
   return data.signedUrl;
 }
+
+export async function editarPrestamo(params: {
+  loanId: string;
+  borrowerId: string;
+  amount: number;
+  description: string;
+  dueDate: string | null;
+}) {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    throw new Error("No hay una sesión activa.");
+  }
+
+  if (params.borrowerId === session.user.id) {
+    throw new Error("No puedes registrarte un préstamo a ti mismo.");
+  }
+
+  const { data, error } = await supabase
+    .from("loans")
+    .update({
+      borrower_id: params.borrowerId,
+      amount: params.amount,
+      description: params.description || null,
+      due_date: params.dueDate,
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.loanId)
+    .eq("lender_id", session.user.id)
+    .in("status", ["pending", "rejected"])
+    .select("id");
+
+  if (error) throw error;
+
+  // Si RLS bloquea el cambio, Supabase no marca error: solo devuelve 0 filas.
+  if (!data || data.length === 0) {
+    throw new Error("No se pudo editar el préstamo.");
+  }
+
+  // Quita la respuesta anterior del deudor para que pueda responder de nuevo.
+  await supabase
+    .from("loan_acceptances")
+    .delete()
+    .eq("loan_id", params.loanId)
+    .neq("user_id", session.user.id);
+}
+
+export async function eliminarPrestamo(loanId: string) {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    throw new Error("No hay una sesión activa.");
+  }
+
+  // Primero las aceptaciones, por si tu tabla las liga al préstamo.
+  await supabase.from("loan_acceptances").delete().eq("loan_id", loanId);
+
+  const { data, error } = await supabase
+    .from("loans")
+    .delete()
+    .eq("id", loanId)
+    .eq("lender_id", session.user.id)
+    .in("status", ["pending", "rejected"])
+    .select("id");
+
+  if (error) throw error;
+
+  if (!data || data.length === 0) {
+    throw new Error("No se pudo eliminar el préstamo.");
+  }
+}

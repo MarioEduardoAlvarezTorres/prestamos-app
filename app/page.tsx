@@ -9,6 +9,8 @@ import {
   confirmarRecepcion as confirmarRecepcionService,
   registrarPago as registrarPagoService,
   verComprobante as verComprobanteService,
+  editarPrestamo as editarPrestamoService,
+  eliminarPrestamo as eliminarPrestamoService,
 } from "../lib/prestamos";
 
 import {
@@ -77,6 +79,7 @@ type SharedExpenseParticipant = {
   amount: number;
   accepted: boolean;
   accepted_at: string | null;
+  rejected?: boolean;
   paid: boolean;
   payment_amount: number | null;
   payment_evidence_url: string | null;
@@ -207,6 +210,11 @@ export default function Home() {
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
 
+  // Edición / eliminación de préstamos
+  const [editingLoanId, setEditingLoanId] = useState<string | null>(null);
+  const [loanToDelete, setLoanToDelete] = useState<Loan | null>(null);
+  const [loanDeleteLoading, setLoanDeleteLoading] = useState(false);
+
   const [paymentLoan, setPaymentLoan] = useState<Loan | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentFile, setPaymentFile] = useState<File | null>(null);
@@ -304,6 +312,15 @@ export default function Home() {
       hour: "2-digit",
       minute: "2-digit",
     });
+  }
+
+  // Fecha de hoy en formato YYYY-MM-DD (zona horaria local)
+  function hoyISO() {
+    const d = new Date();
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const dia = String(d.getDate()).padStart(2, "0");
+
+    return `${d.getFullYear()}-${mes}-${dia}`;
   }
 
   function obtenerNombre(userId: string) {
@@ -563,30 +580,51 @@ export default function Home() {
       return;
     }
 
+    if (dueDate && dueDate < hoyISO()) {
+      mostrarModal(
+        "Fecha inválida",
+        "La fecha límite de pago debe ser hoy o una fecha futura.",
+        "error"
+      );
+      return;
+    }
+
     try {
       setSending(true);
 
       const nombreDestinatario = obtenerNombre(selectedUser);
+      const editando = editingLoanId !== null;
 
-      await registrarPrestamoService({
-        borrowerId: selectedUser,
-        amount: numero,
-        description: description.trim(),
-        dueDate: dueDate || null,
-      });
+      if (editando) {
+        await editarPrestamoService({
+          loanId: editingLoanId!,
+          borrowerId: selectedUser,
+          amount: numero,
+          description: description.trim(),
+          dueDate: dueDate || null,
+        });
+      } else {
+        await registrarPrestamoService({
+          borrowerId: selectedUser,
+          amount: numero,
+          description: description.trim(),
+          dueDate: dueDate || null,
+        });
+      }
 
-      setSelectedUser("");
-      setAmount("");
-      setDescription("");
-      setDueDate("");
+      limpiarFormularioPrestamo();
 
       await loadData();
 
       mostrarModal(
-        "Préstamo registrado",
-        `Registraste que le prestaste ${formatearMonto(
-          numero
-        )} a ${nombreDestinatario}. Esa persona debe confirmarlo.`,
+        editando ? "Préstamo actualizado" : "Préstamo registrado",
+        editando
+          ? `Actualizaste el préstamo de ${formatearMonto(
+            numero
+          )} para ${nombreDestinatario}. Esa persona debe confirmarlo.`
+          : `Registraste que le prestaste ${formatearMonto(
+            numero
+          )} a ${nombreDestinatario}. Esa persona debe confirmarlo.`,
         "success"
       );
     } catch (error: any) {
@@ -599,6 +637,60 @@ export default function Home() {
       );
     } finally {
       setSending(false);
+    }
+  }
+
+  function limpiarFormularioPrestamo() {
+    setEditingLoanId(null);
+    setSelectedUser("");
+    setAmount("");
+    setDescription("");
+    setDueDate("");
+  }
+
+  function iniciarEdicionPrestamo(loan: Loan) {
+    setEditingLoanId(loan.id);
+    setSelectedUser(loan.borrower_id);
+    setAmount(String(loan.amount));
+    setDescription(loan.description || "");
+    setDueDate(loan.due_date ? loan.due_date.slice(0, 10) : "");
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function confirmarEliminarPrestamo() {
+    if (!loanToDelete) return;
+
+    try {
+      setLoanDeleteLoading(true);
+
+      await eliminarPrestamoService(loanToDelete.id);
+
+      if (editingLoanId === loanToDelete.id) {
+        limpiarFormularioPrestamo();
+      }
+
+      setLoanToDelete(null);
+
+      await loadData();
+
+      mostrarModal(
+        "Préstamo eliminado",
+        "El préstamo se eliminó correctamente.",
+        "success"
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      setLoanToDelete(null);
+
+      mostrarModal(
+        "No se pudo eliminar",
+        error?.message || "Ocurrió un error.",
+        "error"
+      );
+    } finally {
+      setLoanDeleteLoading(false);
     }
   }
 
@@ -618,7 +710,7 @@ export default function Home() {
         aceptar ? "Préstamo confirmado" : "Préstamo rechazado",
         aceptar
           ? "Confirmaste que recibiste este préstamo. Ahora queda activo."
-          : "Indicaste que no reconoces este préstamo.",
+          : "Rechazaste este préstamo. Quien lo registró podrá modificarlo o eliminarlo.",
         aceptar ? "success" : "info"
       );
     } catch (error: any) {
@@ -1089,7 +1181,7 @@ export default function Home() {
         aceptar ? "Gasto aceptado" : "Gasto rechazado",
         aceptar
           ? "Aceptaste tu parte del gasto. Podrás registrar tu pago cuando todos los participantes acepten."
-          : "Rechazaste participar en el gasto.",
+          : "Rechazaste participar en el gasto. Quien lo creó podrá modificarlo o eliminarlo.",
         aceptar ? "success" : "info"
       );
     } catch (error: any) {
@@ -1286,9 +1378,12 @@ export default function Home() {
       loan.status === "pending" && loan.borrower_id === currentUserId
   );
 
+  // Solicitudes que yo envié: pendientes o rechazadas (para poder
+  // modificarlas o eliminarlas).
   const prestamosPorAceptar = loans.filter(
     (loan) =>
-      loan.status === "pending" && loan.lender_id === currentUserId
+      (loan.status === "pending" || loan.status === "rejected") &&
+      loan.lender_id === currentUserId
   );
 
   const pagosPendientes = loans.filter(
@@ -1296,11 +1391,9 @@ export default function Home() {
       loan.status === "payment_pending" && loan.lender_id === currentUserId
   );
 
+  // Los préstamos rechazados o eliminados no aparecen en el historial.
   const historialPrestamos = loans.filter(
-    (loan) =>
-      loan.status === "completed" ||
-      loan.status === "rejected" ||
-      loan.status === "cancelled"
+    (loan) => loan.status === "completed"
   );
 
   // Solicitudes que me hacen y aún no acepto.
@@ -1318,7 +1411,8 @@ export default function Home() {
       (participant) =>
         participant.expense_id === expense.id &&
         participant.user_id === currentUserId &&
-        participant.accepted === false
+        participant.accepted === false &&
+        participant.rejected !== true
     );
   });
 
@@ -1362,9 +1456,10 @@ export default function Home() {
   // Historial: gastos terminados, y también aquellos donde a MÍ ya me
   // confirmaron mi pago (aunque los demás todavía no completen el suyo).
   const historialGastos = sharedExpenses.filter((expense) => {
-    if (expense.status === "completed" || expense.status === "cancelled") {
-      return true;
-    }
+    if (expense.status === "completed") return true;
+
+    // Los gastos eliminados o cancelados no aparecen en el historial.
+    if (expense.status === "cancelled") return false;
 
     if (expense.created_by === currentUserId) return false;
 
@@ -1621,6 +1716,22 @@ export default function Home() {
               </p>
             </div>
 
+            {otrosParticipantes.some((item) => item.rejected) && (
+              <div className="mt-3 rounded-2xl bg-red-50 border border-red-200 p-3">
+                <p className="text-sm font-semibold text-red-800">
+                  Rechazaron este gasto
+                </p>
+
+                <p className="text-sm text-red-700 mt-1">
+                  {otrosParticipantes
+                    .filter((item) => item.rejected)
+                    .map((item) => obtenerNombre(item.user_id))
+                    .join(", ")}{" "}
+                  rechazó su parte. Modifica el gasto o elimínalo.
+                </p>
+              </div>
+            )}
+
             {!tienePagos &&
               expense.status !== "completed" &&
               expense.status !== "cancelled" && (
@@ -1679,7 +1790,11 @@ export default function Home() {
                           </div>
 
                           <div className="text-right">
-                            {!item.accepted ? (
+                            {item.rejected ? (
+                              <span className="text-xs font-semibold text-red-700">
+                                Rechazó
+                              </span>
+                            ) : !item.accepted ? (
                               <span className="text-xs font-semibold text-amber-700">
                                 Falta aceptar
                               </span>
@@ -1871,12 +1986,15 @@ export default function Home() {
             <section className="bg-white rounded-3xl shadow-sm border border-slate-200 p-5">
               <div className="mb-5">
                 <h2 className="text-xl font-bold text-slate-900">
-                  Registrar dinero prestado
+                  {editingLoanId
+                    ? "Editar préstamo"
+                    : "Registrar dinero prestado"}
                 </h2>
 
                 <p className="text-sm text-slate-700 mt-1">
-                  Registra a quién le prestaste dinero. Esa persona deberá
-                  confirmar el préstamo.
+                  {editingLoanId
+                    ? "Al guardar, la solicitud se envía de nuevo y esa persona deberá confirmarla."
+                    : "Registra a quién le prestaste dinero. Esa persona deberá confirmar el préstamo."}
                 </p>
               </div>
 
@@ -1912,20 +2030,51 @@ export default function Home() {
                   className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900 placeholder:text-slate-500"
                 />
 
-                <input
-                  type="date"
-                  value={dueDate}
-                  onChange={(event) => setDueDate(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900"
-                />
+                <div>
+                  <label
+                    htmlFor="loan-due-date"
+                    className="block text-sm font-medium text-slate-700 mb-1"
+                  >
+                    Fecha límite de pago (opcional)
+                  </label>
+
+                  <input
+                    id="loan-due-date"
+                    type="date"
+                    min={hoyISO()}
+                    value={dueDate}
+                    onChange={(event) => setDueDate(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-slate-900"
+                  />
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    Es el día en que quedaron de pagar. Solo puede ser hoy o
+                    una fecha futura.
+                  </p>
+                </div>
 
                 <button
                   onClick={registrarPrestamo}
                   disabled={sending}
                   className="w-full rounded-2xl bg-slate-900 text-white py-3.5 font-semibold disabled:opacity-50"
                 >
-                  {sending ? "Registrando..." : "Registrar préstamo"}
+                  {sending
+                    ? "Guardando..."
+                    : editingLoanId
+                      ? "Guardar cambios"
+                      : "Registrar préstamo"}
                 </button>
+
+                {editingLoanId && (
+                  <button
+                    type="button"
+                    onClick={limpiarFormularioPrestamo}
+                    disabled={sending}
+                    className="w-full rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
               </div>
             </section>
 
@@ -1934,7 +2083,7 @@ export default function Home() {
             {prestamosPorAceptar.length > 0 && (
               <section>
                 <h2 className="text-lg font-bold text-slate-900 mb-3">
-                  Pendientes por aceptar
+                  Solicitudes que envié
                 </h2>
 
                 <div className="space-y-3">
@@ -1961,21 +2110,53 @@ export default function Home() {
 
                       <div className="mt-4 text-sm text-slate-700 space-y-1">
                         <p>
-                          Fecha del registro: {formatearFecha(loan.created_at)}
+                          Registrado: {formatearFecha(loan.created_at)}
                         </p>
 
-                        <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
+                        <p>Fecha límite de pago: {formatearFecha(loan.due_date)}</p>
                       </div>
 
-                      <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
-                        <p className="font-semibold text-amber-900">
-                          Pendiente de aceptación
-                        </p>
+                      {loan.status === "rejected" ? (
+                        <div className="mt-4 rounded-2xl bg-red-50 border border-red-200 p-4">
+                          <p className="font-semibold text-red-800">
+                            Préstamo rechazado
+                          </p>
 
-                        <p className="text-sm text-amber-800 mt-1">
-                          {obtenerNombre(loan.borrower_id)} todavía no ha
-                          aceptado este préstamo.
-                        </p>
+                          <p className="text-sm text-red-700 mt-1">
+                            {obtenerNombre(loan.borrower_id)} rechazó este
+                            préstamo. Puedes modificarlo y volver a enviarlo,
+                            o eliminarlo.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4">
+                          <p className="font-semibold text-amber-900">
+                            Pendiente de aceptación
+                          </p>
+
+                          <p className="text-sm text-amber-800 mt-1">
+                            {obtenerNombre(loan.borrower_id)} todavía no ha
+                            aceptado este préstamo.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <button
+                          type="button"
+                          onClick={() => iniciarEdicionPrestamo(loan)}
+                          className="rounded-2xl bg-slate-100 text-slate-800 py-3 font-semibold"
+                        >
+                          ✏️ Editar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setLoanToDelete(loan)}
+                          className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold"
+                        >
+                          🗑️ Eliminar
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -2019,10 +2200,10 @@ export default function Home() {
 
                       <div className="mt-4 text-sm text-slate-700 space-y-1">
                         <p>
-                          Fecha del registro: {formatearFecha(loan.created_at)}
+                          Registrado: {formatearFecha(loan.created_at)}
                         </p>
 
-                        <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
+                        <p>Fecha límite de pago: {formatearFecha(loan.due_date)}</p>
                       </div>
 
                       <p className="text-sm text-amber-800 mt-4">
@@ -2045,7 +2226,7 @@ export default function Home() {
                           disabled={responseLoading === loan.id}
                           className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
                         >
-                          No lo reconozco
+                          Rechazar
                         </button>
                       </div>
                     </div>
@@ -2099,7 +2280,7 @@ export default function Home() {
                         <div className="mt-4 text-sm text-slate-700 space-y-1">
                           <p>Registrado: {formatearFecha(loan.created_at)}</p>
 
-                          <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
+                          <p>Fecha límite de pago: {formatearFecha(loan.due_date)}</p>
                         </div>
 
                         <div className="mt-4">
@@ -2181,7 +2362,7 @@ export default function Home() {
                           </p>
 
                           <p>
-                            Fecha límite original:{" "}
+                            Fecha límite de pago original:{" "}
                             {formatearFecha(loan.due_date)}
                           </p>
                         </div>
@@ -2515,18 +2696,29 @@ export default function Home() {
                           </p>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="grid grid-cols-2 gap-2 mt-4">
                           <button
                             type="button"
                             onClick={() =>
                               responderGastoCompartido(expense.id, true)
                             }
                             disabled={responseLoading === expense.id}
-                            className="w-full rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
+                            className="rounded-2xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-50"
                           >
                             {responseLoading === expense.id
                               ? "Guardando..."
                               : "Aceptar"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              responderGastoCompartido(expense.id, false)
+                            }
+                            disabled={responseLoading === expense.id}
+                            className="rounded-2xl bg-red-100 text-red-700 py-3 font-semibold disabled:opacity-50"
+                          >
+                            Rechazar
                           </button>
                         </div>
                       </div>
@@ -2716,7 +2908,7 @@ export default function Home() {
                       <div className="mt-3 text-sm text-slate-700 space-y-1">
                         <p>Registrado: {formatearFecha(loan.created_at)}</p>
 
-                        <p>Fecha límite: {formatearFecha(loan.due_date)}</p>
+                        <p>Fecha límite de pago: {formatearFecha(loan.due_date)}</p>
                       </div>
 
                       {payment && (
@@ -2939,32 +3131,38 @@ export default function Home() {
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200">
         <div className="max-w-xl mx-auto grid grid-cols-3">
-          <button
-            onClick={() => setActiveTab("prestamos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "prestamos" ? "text-slate-900" : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">💸</div>
-            Préstamos
-          </button>
+          {(
+            [
+              { id: "prestamos", icon: "💸", label: "Préstamos" },
+              { id: "gastos", icon: "🍽️", label: "Gastos" },
+              { id: "historial", icon: "📋", label: "Historial" },
+            ] as const
+          ).map((tab) => {
+            const activo = activeTab === tab.id;
 
-          <button
-            onClick={() => setActiveTab("gastos")}
-            className={`py-4 text-sm font-semibold ${activeTab === "gastos" ? "text-slate-900" : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">🍽️</div>
-            Gastos
-          </button>
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                aria-current={activo ? "page" : undefined}
+                className={`relative py-3 text-sm transition-colors ${activo
+                  ? "bg-slate-100 text-slate-900 font-bold"
+                  : "text-slate-400 font-medium"
+                  }`}
+              >
+                {activo && (
+                  <span className="absolute top-0 left-4 right-4 h-1 rounded-b-full bg-slate-900" />
+                )}
 
-          <button
-            onClick={() => setActiveTab("historial")}
-            className={`py-4 text-sm font-semibold ${activeTab === "historial" ? "text-slate-900" : "text-slate-500"
-              }`}
-          >
-            <div className="text-xl">📋</div>
-            Historial
-          </button>
+                <div className={`text-xl ${activo ? "" : "grayscale opacity-50"}`}>
+                  {tab.icon}
+                </div>
+
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       </nav>
 
@@ -3035,6 +3233,44 @@ export default function Home() {
                 className="rounded-2xl bg-red-600 text-white py-3 font-semibold disabled:opacity-50"
               >
                 {deleteLoading ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
+          MODAL CONFIRMAR ELIMINAR PRÉSTAMO
+      ====================================================== */}
+
+      {loanToDelete && (
+        <div className="fixed inset-0 z-[55] bg-black/40 flex items-center justify-center px-5">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-slate-900">
+              ¿Eliminar préstamo?
+            </h3>
+
+            <p className="text-slate-700 mt-2">
+              Se eliminará el préstamo de {formatearMonto(loanToDelete.amount)}{" "}
+              para {obtenerNombre(loanToDelete.borrower_id)}. Esta acción no se
+              puede deshacer.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 mt-5">
+              <button
+                onClick={() => setLoanToDelete(null)}
+                disabled={loanDeleteLoading}
+                className="rounded-2xl bg-slate-100 text-slate-700 py-3 font-semibold"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={confirmarEliminarPrestamo}
+                disabled={loanDeleteLoading}
+                className="rounded-2xl bg-red-600 text-white py-3 font-semibold disabled:opacity-50"
+              >
+                {loanDeleteLoading ? "Eliminando..." : "Sí, eliminar"}
               </button>
             </div>
           </div>
