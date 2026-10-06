@@ -869,6 +869,18 @@ export default function Home() {
     );
   }
 
+  // El pago solo se habilita cuando TODOS los participantes aceptaron.
+  function todosAceptaron(expenseId: string) {
+    const participantes = sharedParticipants.filter(
+      (participant) => participant.expense_id === expenseId
+    );
+
+    return (
+      participantes.length > 0 &&
+      participantes.every((participant) => participant.accepted === true)
+    );
+  }
+
   function iniciarEdicionGasto(expense: SharedExpense) {
     const participantes = sharedParticipants.filter(
       (participant) => participant.expense_id === expense.id
@@ -1076,7 +1088,7 @@ export default function Home() {
       mostrarModal(
         aceptar ? "Gasto aceptado" : "Gasto rechazado",
         aceptar
-          ? "Aceptaste tu parte del gasto. Ahora puedes registrar tu pago."
+          ? "Aceptaste tu parte del gasto. Podrás registrar tu pago cuando todos los participantes acepten."
           : "Rechazaste participar en el gasto.",
         aceptar ? "success" : "info"
       );
@@ -1139,6 +1151,15 @@ export default function Home() {
 
   async function registrarPagoGastoCompartido() {
     if (!sharedPaymentExpense || !currentUserId) {
+      return;
+    }
+
+    if (!todosAceptaron(sharedPaymentExpense.id)) {
+      mostrarModal(
+        "Aún no puedes pagar",
+        "El pago se habilita cuando todos los participantes acepten el gasto.",
+        "info"
+      );
       return;
     }
 
@@ -1333,14 +1354,27 @@ export default function Home() {
       (participant) =>
         participant.expense_id === expense.id &&
         participant.user_id === currentUserId &&
-        participant.accepted === true
+        participant.accepted === true &&
+        participant.paid === false
     );
   });
 
-  const historialGastos = sharedExpenses.filter(
-    (expense) =>
-      expense.status === "completed" || expense.status === "cancelled"
-  );
+  // Historial: gastos terminados, y también aquellos donde YO ya registré
+  // mi pago (aunque los demás todavía no completen el suyo).
+  const historialGastos = sharedExpenses.filter((expense) => {
+    if (expense.status === "completed" || expense.status === "cancelled") {
+      return true;
+    }
+
+    if (expense.created_by === currentUserId) return false;
+
+    return sharedParticipants.some(
+      (participant) =>
+        participant.expense_id === expense.id &&
+        participant.user_id === currentUserId &&
+        participant.paid === true
+    );
+  });
 
   // ------------------------------------------------------------
   // Filtros del historial
@@ -1494,23 +1528,36 @@ export default function Home() {
               </p>
             )}
 
-            {miParticipacion.accepted && !miParticipacion.paid && (
-              <>
-                <p className="text-sm text-red-700 mt-2">
-                  Falta registrar tu pago.
-                </p>
+            {miParticipacion.accepted &&
+              !miParticipacion.paid &&
+              (todosAceptaron(expense.id) ? (
+                <>
+                  <p className="text-sm text-red-700 mt-2">
+                    Todos aceptaron. Falta registrar tu pago.
+                  </p>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    abrirPagoGastoCompartido(expense, miParticipacion)
-                  }
-                  className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
-                >
-                  Registrar mi pago
-                </button>
-              </>
-            )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      abrirPagoGastoCompartido(expense, miParticipacion)
+                    }
+                    className="w-full mt-3 rounded-2xl bg-slate-900 text-white py-3 font-semibold"
+                  >
+                    Registrar mi pago
+                  </button>
+                </>
+              ) : (
+                <div className="mt-3 rounded-2xl bg-amber-50 border border-amber-200 p-3">
+                  <p className="text-sm font-semibold text-amber-900">
+                    Ya aceptaste tu parte
+                  </p>
+
+                  <p className="text-sm text-amber-800 mt-1">
+                    Solo podrás pagar cuando todos los participantes acepten
+                    el gasto.
+                  </p>
+                </div>
+              ))}
 
             {miParticipacion.paid && (
               <div className="mt-3">
@@ -1569,7 +1616,8 @@ export default function Home() {
               </p>
 
               <p className="text-sm text-slate-700 mt-1">
-                Los participantes deben aceptar y después pagarte su parte.
+                Todos los participantes deben aceptar primero. Solo cuando
+                todos acepten podrán pagarte su parte.
               </p>
             </div>
 
@@ -1637,7 +1685,9 @@ export default function Home() {
                               </span>
                             ) : !item.paid ? (
                               <span className="text-xs font-semibold text-red-700">
-                                Falta pagar
+                                {todosAceptaron(expense.id)
+                                  ? "Falta pagar"
+                                  : "Esperando a los demás"}
                               </span>
                             ) : item.payment_confirmed ? (
                               <span className="text-xs font-semibold text-emerald-700">
@@ -2203,7 +2253,7 @@ export default function Home() {
 
                   <p className="text-sm text-slate-700 mt-1">
                     Tú pagas el total y las personas seleccionadas te pagan su
-                    parte.
+                    parte. Solo podrán pagar cuando todos acepten.
                   </p>
                 </div>
 
@@ -2460,8 +2510,8 @@ export default function Home() {
                           </p>
 
                           <p className="text-sm text-amber-800 mt-1">
-                            Si aceptas, después podrás registrar tu pago y subir
-                            el comprobante.
+                            Podrás registrar tu pago y subir el comprobante
+                            cuando todos los participantes hayan aceptado.
                           </p>
                         </div>
 
@@ -2714,7 +2764,7 @@ export default function Home() {
             >
               {historialGastosFiltrado.length === 0 ? (
                 <p className="text-slate-700 text-center py-4">
-                  No hay gastos terminados.
+                  No hay gastos en el historial.
                 </p>
               ) : (
                 historialGastosFiltrado.map((expense) => {
@@ -2744,12 +2794,18 @@ export default function Home() {
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${expense.status === "completed"
                             ? "bg-emerald-50 text-emerald-700"
-                            : "bg-red-100 text-red-700"
+                            : expense.status === "cancelled"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-blue-100 text-blue-700"
                             }`}
                         >
                           {expense.status === "completed"
                             ? "Completado"
-                            : "Cancelado"}
+                            : expense.status === "cancelled"
+                              ? "Cancelado"
+                              : miParticipacion?.payment_confirmed
+                                ? "Pago confirmado"
+                                : "Pago por confirmar"}
                         </span>
                       </div>
 
