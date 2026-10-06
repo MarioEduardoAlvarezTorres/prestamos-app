@@ -1445,7 +1445,7 @@ export default function Home() {
 
   const pagosPendientes = loans.filter(
     (loan) =>
-      loan.status === "payment_pending"
+      loan.status === "payment_pending" && loan.lender_id === currentUserId
   );
 
   // Los préstamos rechazados o eliminados no aparecen en el historial.
